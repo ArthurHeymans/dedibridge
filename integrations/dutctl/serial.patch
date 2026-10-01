@@ -1,0 +1,170 @@
+--- a/pkg/module/serial/serial.go
++++ b/pkg/module/serial/serial.go
+@@ -53,9 +53,10 @@
+ // The module is non-interactive: all input is supplied up front as arguments,
+ // which makes it suitable for scripts and automated callers.
+ type Serial struct {
+-	Port  string // Port is the path to the serial device on the dutagent.
+-	Baud  int    // Baud is the baud rate of the serial device. If unset, DefaultBaudRate is used.
+-	Delay string // Delay is the pause before each send (e.g. "200ms") to pace input. Default 50ms; "0s" disables.
++	DediSocket string `yaml:"dedi_socket"` // DediSocket selects a DediBridge daemon instead of a COM port.
++	Port       string // Port is the path to the serial device on the dutagent.
++	Baud       int    // Baud is the baud rate of the serial device. If unset, DefaultBaudRate is used.
++	Delay      string // Delay is the pause before each send (e.g. "200ms") to pace input. Default 50ms; "0s" disables.
+ 
+ 	delay time.Duration // delay is the parsed Delay, applied before each send.
+ 
+@@ -63,8 +64,8 @@
+ 	// exists so tests can shorten the drain; production leaves it 0.
+ 	drainTimeout time.Duration
+ 
+-	// open opens the serial port. It defaults to defaultOpenPort in Run; tests
+-	// set it to a fake. Opening happens per Run, never on the struct.
++	// open opens the selected transport in Run; tests can set a fake. Opening
++	// happens per Run, never on the struct.
+ 	open portOpener
+ }
+ 
+@@ -84,6 +85,14 @@
+ `
+ 
+ const description = `
++CONFIGURATION:
++	port          Local serial device (existing COM-port transport).
++	dedi_socket   DediBridge daemon Unix socket, instead of port.
++	baud          Hardware UART baud, configured when the run opens.
++
++Only one of port and dedi_socket may be set. DediBridge needs its daemon
++running on the dutagent host; overflow and disconnect fail the run.
++
+ The serial module automates interaction with the DUT's serial console. All
+ input is provided up front as arguments, so it suits scripts and automated
+ callers.
+@@ -138,7 +147,11 @@
+ 	help := strings.Builder{}
+ 	help.WriteString(abstract)
+ 	help.WriteString(usage)
+-	fmt.Fprintf(&help, "Configured COM port is %q with baud rate %d.\n", s.Port, s.Baud)
++	if s.DediSocket != "" {
++		fmt.Fprintf(&help, "Configured DediBridge socket is %q with baud rate %d.\n", s.DediSocket, s.Baud)
++	} else {
++		fmt.Fprintf(&help, "Configured COM port is %q with baud rate %d.\n", s.Port, s.Baud)
++	}
+ 	help.WriteString(description)
+ 
+ 	return help.String()
+@@ -148,8 +161,11 @@
+ // does not open the serial port, so dutagent can start even when the device is
+ // unavailable (e.g. powered off); the port is opened per Run instead.
+ func (s *Serial) Init(ctx context.Context) error {
+-	if s.Port == "" {
+-		return fmt.Errorf("COM port is not set")
++	if s.Port == "" && s.DediSocket == "" {
++		return fmt.Errorf("COM port is not set (configure Port or DediSocket)")
++	}
++	if s.Port != "" && s.DediSocket != "" {
++		return fmt.Errorf("configure only one of Port and DediSocket")
+ 	}
+ 
+ 	if s.Baud == 0 {
+@@ -222,8 +238,16 @@
+ 	}
+ 
+ 	opener := s.open
++	endpoint := s.Port
++	if s.DediSocket != "" {
++		endpoint = "dedibridge:" + s.DediSocket
++	}
+ 	if opener == nil {
+-		opener = defaultOpenPort
++		if s.DediSocket != "" {
++			opener = func(_ string, baud int) (port, error) { return openDediPort(s.DediSocket, baud) }
++		} else {
++			opener = defaultOpenPort
++		}
+ 	}
+ 
+ 	serialPort, err := opener(s.Port, s.Baud)
+@@ -239,10 +263,10 @@
+ 		l.Warn("reset input buffer failed", "err", err)
+ 	}
+ 
+-	l.Info(fmt.Sprintf("connected to %s at %d baud", s.Port, s.Baud))
++	l.Info(fmt.Sprintf("connected to %s at %d baud", endpoint, s.Baud))
+ 
+ 	clientOut := newClientWriter(session)
+-	clientOut.markerf("--- Connected to %s at %d baud ---\n", s.Port, s.Baud)
++	clientOut.markerf("--- Connected to %s at %d baud ---\n", endpoint, s.Baud)
+ 
+ 	// loopCtx carries the per-sequence deadline (-t). The original ctx is kept
+ 	// for the post-send drain so the drain gets its own full window.
+--- /dev/null
++++ b/pkg/module/serial/serial_integration_test.go
+@@ -0,0 +1,67 @@
++// Copyright (c) 2026 Arthur Heymans
++// SPDX-License-Identifier: MIT OR Apache-2.0
++
++// These tests run after applying serial.patch in a dutctl checkout.
++package serial
++
++import (
++	"context"
++	"encoding/base64"
++	"encoding/json"
++	"fmt"
++	"net"
++	"testing"
++	"time"
++
++	"github.com/BlindspotSoftware/dutctl/internal/test/mock"
++	"gopkg.in/yaml.v3"
++)
++
++func TestDediSocketConfigurationAndSendExpect(t *testing.T) {
++	writes := make(chan string, 1)
++	socket := testBridge(t, func(conn net.Conn, decoder *json.Decoder, encoder *json.Encoder) {
++		for {
++			var request bridgeRequest
++			if decoder.Decode(&request) != nil {
++				return
++			}
++			switch request.Op {
++			case "reset_input":
++				_ = encoder.Encode(bridgeMessage{Type: "reset_input"})
++				uart(encoder, []byte("boot>\r\n"))
++			case "write":
++				data, _ := base64.StdEncoding.DecodeString(request.Data)
++				writes <- string(data)
++				_ = encoder.Encode(bridgeMessage{Type: "written"})
++				uart(encoder, []byte("result: OK\r\n"))
++			}
++		}
++	})
++	var serial Serial
++	if err := yaml.Unmarshal([]byte(fmt.Sprintf("dedi_socket: %q\nbaud: 115200\ndelay: 0s\n", socket)), &serial); err != nil {
++		t.Fatal(err)
++	}
++	if serial.DediSocket != socket {
++		t.Fatal("configuration did not select socket transport")
++	}
++	if err := serial.Init(context.Background()); err != nil {
++		t.Fatal(err)
++	}
++	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
++	defer cancel()
++	if err := serial.Run(ctx, &mock.Session{}, "--", "expect", "boot>", "send", "help", "expect", "result: OK"); err != nil {
++		t.Fatal(err)
++	}
++	select {
++	case data := <-writes:
++		if data != "help\r" {
++			t.Fatalf("send %q", data)
++		}
++	default:
++		t.Fatal("no UART write")
++	}
++	serial.Port = "/dev/ttyUSB0"
++	if err := serial.Init(context.Background()); err == nil {
++		t.Fatal("ambiguous transport configuration accepted")
++	}
++}

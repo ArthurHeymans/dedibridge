@@ -1,0 +1,26 @@
+[package]
+name = "dedi-rp2040"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+dedi-core.workspace = true
+dedi-protocol.workspace = true
+embassy-executor = { workspace = true, features = ["platform-cortex-m", "executor-thread"] }
+embassy-rp = { version = "0.10", features = ["rp2040", "time-driver", "critical-section-impl", "unstable-pac"] }
+embassy-usb.workspace = true
+embassy-time.workspace = true
+embassy-futures.workspace = true
+critical-section.workspace = true
+portable-atomic.workspace = true
+defmt.workspace = true
+defmt-rtt.workspace = true
+static_cell.workspace = true
+embedded-hal.workspace = true
+embedded-io-async = "0.7"
+cortex-m = { version = "0.7", features = ["inline-asm"] }
+cortex-m-rt = "0.7"
+panic-probe = { version = "1", features = ["print-defmt"] }
+pio = "0.3"
+fixed = "1"

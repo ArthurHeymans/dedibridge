@@ -1,0 +1,25 @@
+[package]
+name = "dedi-stm32f103"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+dedi-core.workspace = true
+dedi-protocol.workspace = true
+embassy-stm32 = { version = "0.6", features = ["stm32f103c8", "time-driver-any", "memory-x", "unstable-pac", "exti"] }
+embassy-executor = { workspace = true, features = ["platform-cortex-m", "executor-thread"] }
+embassy-usb.workspace = true
+embassy-sync.workspace = true
+embassy-time.workspace = true
+embassy-futures.workspace = true
+critical-section.workspace = true
+portable-atomic.workspace = true
+defmt.workspace = true
+defmt-rtt.workspace = true
+static_cell.workspace = true
+embedded-hal.workspace = true
+embedded-io-async = "0.7"
+cortex-m = { version = "0.7", features = ["inline-asm", "critical-section-single-core"] }
+cortex-m-rt = "0.7"
+panic-probe = { version = "1", features = ["print-defmt"] }

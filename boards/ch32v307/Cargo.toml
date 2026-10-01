@@ -1,0 +1,23 @@
+[package]
+name = "dedi-ch32v307"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+dedi-core.workspace = true
+dedi-protocol.workspace = true
+ch32-hal = { git = "https://github.com/ArthurHeymans/ch32-hal", rev = "23f0e114431a4b7920727214b530a8f99a85fadb", features = ["ch32v307vct6", "memory-x", "embassy", "rt", "highcode", "time-driver-tim1"] }
+embassy-executor = { workspace = true, features = ["platform-spin", "executor-thread"] }
+embassy-usb.workspace = true
+embassy-time.workspace = true
+embassy-futures.workspace = true
+critical-section.workspace = true
+portable-atomic.workspace = true
+defmt.workspace = true
+defmt-rtt.workspace = true
+static_cell.workspace = true
+embedded-hal.workspace = true
+qingke = "0.7"
+qingke-rt = "0.7"
+panic-halt = "1"

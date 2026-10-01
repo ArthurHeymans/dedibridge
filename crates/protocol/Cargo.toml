@@ -1,0 +1,9 @@
+[package]
+name = "dedi-protocol"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+zerocopy.workspace = true
+defmt = { workspace = true, optional = true }

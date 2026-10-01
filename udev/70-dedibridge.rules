@@ -1,0 +1,2 @@
+# Desktop logind sessions: grant the active user access to both USB interfaces.
+SUBSYSTEM=="usb", ATTR{idVendor}=="0483", ATTR{idProduct}=="dada", TAG+="uaccess"
