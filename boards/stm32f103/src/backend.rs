@@ -173,13 +173,14 @@ impl dedi_core::aux::UartTx for StmTx {
 
 pub struct StmRecovery;
 pub struct PacketGuard {
-    input: bool,
+    endpoint: embassy_usb::driver::EndpointAddress,
     completed: bool,
 }
-fn endpoint_status(input: bool, stalled: bool) {
+fn endpoint_status(endpoint: embassy_usb::driver::EndpointAddress, stalled: bool) {
+    let input = endpoint.is_in();
     use pac::usb::vals::Stat;
     critical_section::with(|_| {
-        let register = pac::USB.epr(if input { 2 } else { 1 });
+        let register = pac::USB.epr(endpoint.index());
         let old = register.read();
         if (input && old.stat_tx() == Stat::DISABLED) || (!input && old.stat_rx() == Stat::DISABLED)
         {
@@ -204,19 +205,21 @@ fn endpoint_status(input: bool, stalled: bool) {
 }
 impl Recovery for StmRecovery {
     type Guard = PacketGuard;
-    fn packet_guard(input: bool) -> PacketGuard {
+    fn packet_guard(endpoint: embassy_usb::driver::EndpointAddress) -> PacketGuard {
         PacketGuard {
-            input,
+            endpoint,
             completed: false,
         }
     }
     fn complete(guard: &mut PacketGuard) {
         guard.completed = true;
     }
-    async fn write_complete() -> Result<(), embassy_usb::driver::EndpointError> {
+    async fn write_complete(
+        endpoint: embassy_usb::driver::EndpointAddress,
+    ) -> Result<(), embassy_usb::driver::EndpointError> {
         use pac::usb::vals::Stat;
         loop {
-            match pac::USB.epr(2).read().stat_tx() {
+            match pac::USB.epr(endpoint.index()).read().stat_tx() {
                 Stat::NAK => return Ok(()),
                 Stat::DISABLED => return Err(embassy_usb::driver::EndpointError::Disabled),
                 _ => embassy_futures::yield_now().await,
@@ -224,13 +227,23 @@ impl Recovery for StmRecovery {
         }
     }
     fn prepare(input: bool, stalled: bool) {
-        endpoint_status(input, stalled);
+        endpoint_status(
+            embassy_usb::driver::EndpointAddress::from_parts(
+                if input { 2 } else { 1 },
+                if input {
+                    embassy_usb::driver::Direction::In
+                } else {
+                    embassy_usb::driver::Direction::Out
+                },
+            ),
+            stalled,
+        );
     }
 }
 impl Drop for PacketGuard {
     fn drop(&mut self) {
-        if self.input && !self.completed {
-            endpoint_status(true, false);
+        if self.endpoint.is_in() && !self.completed {
+            endpoint_status(self.endpoint, false);
         }
     }
 }

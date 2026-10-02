@@ -49,7 +49,7 @@ gpio_outputs:u8, gpio_inputs:u8, flags:u8, reserved:[u8;2], max_baud:LE32
 ```
 
 `io_modes` is a bitset indexed by the SF600 IoMode enum; current values are
-`0x1f` for Pico and `0x01` for CH32/F103. Existing GPIO caps remain unchanged for
+`0x3f` for Pico (including experimental QPI reads) and `0x01` for CH32/F103. Existing GPIO caps remain unchanged for
 compatibility; new clients use the distinct input/output masks in GET_INFO.
 Identity is the USB serial string; board number is informational, never a host
 transport-selection switch.
@@ -73,6 +73,7 @@ Send one of these, read one response, close:
 {"op":"pulse","mask":1,"ms":100}
 {"op":"direction","mask":1,"values":0}
 {"op":"output","mask":1,"values":0}
+{"op":"set","mask":1,"values":0}
 ```
 
 Responses:
@@ -83,8 +84,11 @@ Responses:
 {"type":"error","message":"..."}
 ```
 
-Output alone does not change direction; use a pulse for reset/power button
-semantics. No control command detaches the serial client or claims interface 0.
+Output alone does not change direction. `set` enables the masked outputs, then
+sets their values, as one serialized daemon actor operation (two acknowledged
+USB commands, not an electrical atomic update). A failure is returned if either
+command fails; there is no rollback. Use a pulse for reset/power button semantics.
+No control command detaches the serial client or claims interface 0.
 
 ### Serial connection
 

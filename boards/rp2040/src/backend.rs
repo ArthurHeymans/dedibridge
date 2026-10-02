@@ -30,7 +30,8 @@ impl Flash for SpiFlash<'_> {
     fn end_transfer(&mut self) {
         SpiFlash::end_transfer(self);
     }
-    const IO_MODES: u8 = 0x1f;
+    // Preserve the original experimental QPI read path as well as dual/quad.
+    const IO_MODES: u8 = 0x3f;
     fn set_frequency(&mut self, hz: u32) -> Result<(), Error> {
         SpiFlash::set_frequency(self, hz);
         Ok(())
@@ -95,7 +96,7 @@ impl Flash for SpiFlash<'_> {
 pub struct PicoRecovery;
 impl Recovery for PicoRecovery {
     type Guard = ();
-    fn packet_guard(_: bool) {}
+    fn packet_guard(_: embassy_usb::driver::EndpointAddress) {}
     fn prepare(input: bool, stalled: bool) {
         let ram = pac::USB_DPRAM;
         if input {

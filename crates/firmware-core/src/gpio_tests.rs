@@ -4,9 +4,9 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 #[derive(Clone)]
-struct Pin(Arc<AtomicBool>);
+pub(crate) struct Pin(Arc<AtomicBool>);
 impl Pin {
-    fn new(high: bool) -> Self {
+    pub(crate) fn new(high: bool) -> Self {
         Self(Arc::new(AtomicBool::new(high)))
     }
 }

@@ -71,10 +71,12 @@ impl<F: Flash, L: LedControl, R: Recovery> Handler for DediprogHandler<'_, F, L,
     fn configured(&mut self, configured: bool) {
         if !configured {
             self.shared.cancel();
+            R::reset();
         }
     }
     fn reset(&mut self) {
         self.shared.cancel();
+        R::reset();
         self.response_len = 0;
         self.io_mode = IoMode::Single;
     }
@@ -139,7 +141,12 @@ impl<F: Flash, L: LedControl, R: Recovery> Handler for DediprogHandler<'_, F, L,
         let data: &[u8] = match req.request {
             CMD_TRANSCEIVE => &self.response[..self.response_len],
             CMD_READ_EEPROM => self.identity.eeprom(),
-            CMD_READ_PROG_INFO => self.identity.device_string(),
+            CMD_READ_PROG_INFO => {
+                if R::CANCEL_ON_PROG_INFO {
+                    self.shared.cancel();
+                }
+                self.identity.device_string()
+            }
             CMD_GET_UID => self.identity.unique_id(),
             CMD_SET_VOLTAGE => &[0x6f],
             CMD_GET_BUTTON => &[1],

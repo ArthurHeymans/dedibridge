@@ -66,15 +66,23 @@ impl<S: SingleSpi> SingleFlash<S> {
             busy_until: None,
         }
     }
-    fn check_busy(&mut self, cancelled: &impl Fn() -> bool) -> Result<(), Error> {
-        if cancelled() {
-            return Err(Error::Cancelled);
+    async fn wait_ready(&mut self, cancelled: &impl Fn() -> bool) -> Result<(), Error> {
+        // The original CH32 backend also settles for 25 ms after an erase.
+        let ready_at = self
+            .busy_until
+            .map(|until| until.max(Instant::now()) + Duration::from_millis(25));
+        loop {
+            if cancelled() {
+                return Err(Error::Cancelled);
+            }
+            let now = Instant::now();
+            let Some(until) = ready_at.filter(|t| now < *t) else {
+                self.busy_until = None;
+                return Ok(());
+            };
+            // Keep flash ownership, but let USB cancellation and UART/GPIO run.
+            Timer::after((until - now).min(Duration::from_millis(1))).await;
         }
-        if self.busy_until.is_some_and(|until| Instant::now() < until) {
-            return Err(Error::FlashBusy);
-        }
-        self.busy_until = None;
-        Ok(())
     }
     async fn poll_wip(&mut self, cancelled: &impl Fn() -> bool) -> Result<(), Error> {
         let deadline = Instant::now() + Duration::from_millis(250);
@@ -143,8 +151,11 @@ impl<S: SingleSpi> Flash for SingleFlash<S> {
             .blocking_write(command)
             .and_then(|()| self.bus.blocking_read(response));
         self.bus.select(false);
-        if result.is_ok() && response.is_empty() {
-            self.busy_until = erase_busy_duration(command).map(|d| Instant::now() + d);
+        if result.is_ok()
+            && response.is_empty()
+            && let Some(duration) = erase_busy_duration(command)
+        {
+            self.busy_until = Some(Instant::now() + duration);
         }
         result
     }
@@ -158,7 +169,7 @@ impl<S: SingleSpi> Flash for SingleFlash<S> {
         dummy_cycles: u8,
         cancelled: impl Fn() -> bool,
     ) -> Result<(), Error> {
-        self.check_busy(&cancelled)?;
+        self.wait_ready(&cancelled).await?;
         if mode != IoMode::Single || mode_byte.is_some() || !dummy_cycles.is_multiple_of(8) {
             return Err(Error::Unsupported);
         }
@@ -191,7 +202,7 @@ impl<S: SingleSpi> Flash for SingleFlash<S> {
         data: &[u8],
         cancelled: impl Fn() -> bool,
     ) -> Result<(), Error> {
-        self.check_busy(&cancelled)?;
+        self.wait_ready(&cancelled).await?;
         let (command, len) = address_command(opcode, address, addr_len)?;
         self.bus.select(true);
         let wren = self.bus.write(&[0x06]).await;
@@ -214,6 +225,99 @@ impl<S: SingleSpi> Flash for SingleFlash<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[derive(Default)]
+    struct Bus {
+        writes: std::vec::Vec<std::vec::Vec<u8>>,
+    }
+    impl SingleSpi for Bus {
+        fn set_frequency(&mut self, _: u32) -> Result<(), Error> {
+            Ok(())
+        }
+        fn select(&mut self, _: bool) {}
+        fn blocking_write(&mut self, bytes: &[u8]) -> Result<(), Error> {
+            self.writes.push(bytes.to_vec());
+            Ok(())
+        }
+        fn blocking_read(&mut self, bytes: &mut [u8]) -> Result<(), Error> {
+            bytes.fill(0);
+            Ok(())
+        }
+        async fn write(&mut self, bytes: &[u8]) -> Result<(), Error> {
+            self.blocking_write(bytes)
+        }
+        async fn read(&mut self, bytes: &mut [u8]) -> Result<(), Error> {
+            self.blocking_read(bytes)
+        }
+    }
+    #[test]
+    fn all_erase_windows_survive_unrelated_write_only_commands() {
+        for (opcode, ms) in [
+            (0x20, 250),
+            (0x21, 250),
+            (0x52, 750),
+            (0x5c, 750),
+            (0xd8, 1500),
+            (0xdc, 1500),
+            (0x60, 60000),
+            (0xc7, 60000),
+        ] {
+            assert_eq!(
+                erase_busy_duration(&[opcode]),
+                Some(Duration::from_millis(ms))
+            );
+            let mut flash = SingleFlash::new(Bus::default());
+            flash.transceive(&[opcode], &mut []).unwrap();
+            let until = flash.busy_until.unwrap();
+            for other in [0x06, 0x04, 0x01] {
+                flash.transceive(&[other], &mut []).unwrap();
+                assert_eq!(flash.busy_until, Some(until));
+                let mut status = [0; 16];
+                flash.transceive(&[0x05], &mut status).unwrap();
+                assert_eq!(status, [1; 16]);
+            }
+        }
+    }
+    #[test]
+    fn early_bulk_waits_for_erase_settling_and_cancellation_keeps_window() {
+        use futures::{executor::block_on, poll};
+        use std::cell::Cell;
+        let mut flash = SingleFlash::new(Bus::default());
+        flash.busy_until = Some(Instant::now() + Duration::from_millis(2));
+        let settled_at = flash.busy_until.unwrap() + Duration::from_millis(25);
+        block_on(flash.start_read(3, 0, 3, IoMode::Single, None, 0, || false)).unwrap();
+        assert!(Instant::now() >= settled_at);
+        assert_eq!(flash.bus.writes[0], [3, 0, 0, 0]);
+        assert!(flash.busy_until.is_none());
+        for write in [false, true] {
+            flash.busy_until = Some(Instant::now() + Duration::from_secs(60));
+            let until = flash.busy_until;
+            let count = flash.bus.writes.len();
+            let cancelled = Cell::new(false);
+            block_on(async {
+                let operation = async {
+                    if write {
+                        flash
+                            .write_page(2, 0, 3, &[0; 256], || cancelled.get())
+                            .await
+                    } else {
+                        flash
+                            .start_read(3, 0, 3, IoMode::Single, None, 0, || cancelled.get())
+                            .await
+                    }
+                };
+                let mut operation = core::pin::pin!(operation);
+                assert!(poll!(operation.as_mut()).is_pending());
+                cancelled.set(true);
+                assert_eq!(operation.await, Err(Error::Cancelled));
+            });
+            assert_eq!(
+                flash.bus.writes.len(),
+                count,
+                "no SPI during forced erase window"
+            );
+            assert_eq!(flash.busy_until, until);
+        }
+    }
     #[test]
     fn address_encoding() {
         let (cmd, len) = address_command(0x0b, 0x12345678, 3).unwrap();

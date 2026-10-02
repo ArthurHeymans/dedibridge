@@ -6,7 +6,7 @@ UART/board-control interface. Extracted from the sibling `dedipico` and
 
 | Board | Flash engine | USB | SPI lanes |
 |---|---|---|---|
-| RP2040 / Pico | PIO + DMA, double-buffered USB IN | Full speed | single / dual / quad |
+| RP2040 / Pico | PIO + DMA, double-buffered USB IN | Full speed | single / dual / quad / experimental QPI reads |
 | CH32V307VCT6 | SPI2 + DMA | High speed | single |
 | STM32F103C8 / Blue Pill POC | SPI2 + DMA | Full speed | single |
 
@@ -14,12 +14,19 @@ All boards use the same USB request handler, bulk queue/cancellation logic,
 auxiliary protocol, UART batching/backpressure, and GPIO pulse service. CH32
 and STM32 also share the entire single-lane flash implementation. Backend
 capabilities are explicit; unsupported multi-lane reads are rejected, not ACKed
-and silently performed incorrectly. QPI and AAI programming are not supported.
+and silently performed incorrectly. Pico retains the original experimental
+QPI **read** path (four-bit opcode/address/data); this is not qualified end-to-end
+QPI programming support. Transceive/page programming remain single-lane and
+some opcodes select dual/quad modes regardless of IO_MODE. AAI programming was
+not correctly implemented in either original and is explicitly rejected.
 
 **Status:** software tests and cross-linked firmware builds are available. The
 new combined firmwares, especially F103 USB recovery/pin muxing and the retained
 RP2040 fast path, still need hardware validation. Building is not evidence of
-successful flashing or USB interoperability. See [hardware checks](docs/hardware-validation.md).
+successful flashing or USB interoperability. The independent
+[parity re-review](docs/parity-review.md) closes all eight reported software
+findings, with hardware qualification still required. See
+[hardware checks](docs/hardware-validation.md).
 
 ## Build and flash
 
@@ -40,14 +47,21 @@ rustup toolchain install nightly --component rust-src
 ./dev flash stm32f103
 ```
 
-`./dev fmt` formats only this workspace. `./dev check` runs host Clippy and
-builds each board separately. Do not use
+`./dev fmt` formats only this workspace. `./dev check` runs warning-denied
+host/core/protocol Clippy, firmware Clippy for each target, and separate release
+builds for all boards. Do not use
 `cargo build --workspace` or `cargo clippy --workspace`: architecture, MCU,
 executor, and time-driver features cannot be combined into one compilation.
 The workspace has **no default embedded target or global build-std setting**;
 plain `cargo test` tests protocol/core/host crates on the host.
 
-Pico UF2 creation remains available through `elf2uf2-rs`:
+CI uploads all three board ELFs and Pico UF2 as the `dedibridge-firmware`
+artifact. Tags publish those same files as release assets: `dedi-rp2040.elf`,
+`dedi-rp2040.uf2`, `dedi-ch32v307.elf`, and `dedi-stm32f103.elf`. ELF downloads
+are for probe-rs; the Pico UF2 is for BOOTSEL drag-and-drop. Generate the same
+bundle locally with `./dev artifacts` (requires `elf2uf2-rs` 2.2.0).
+
+Standalone Pico UF2 creation:
 
 ```sh
 elf2uf2-rs target/thumbv6m-none-eabi/release/dedi-rp2040 dedibridge.uf2
@@ -130,6 +144,12 @@ Run the daemon and dutagent as the same account for the owner-only socket.
 ./dev host --socket /run/user/1000/board-a.sock pty --baud 115200
 ```
 
+Original named GPIO commands also work: `dir reset out`, `set reset 0`,
+`release reset`, and `pulse power 500`. Pins are `reset`, `power`, `power-state`,
+and `aux`; the latter two are input-only and cannot be driven. `set` performs the
+original direction-then-output sequence in one daemon actor operation. Numeric
+`direction MASK VALUES`, `output MASK VALUES`, and `pulse MASK MS` remain available.
+
 The daemon exclusively claims **interface 1**, never the flash interface.
 Multiple devices require explicit serial selection and separate socket paths.
 Only one UART client is permitted per daemon, but GPIO RPCs remain available
@@ -150,6 +170,15 @@ CH32 UART currently retains byte-at-a-time RX DMA from the original firmware;
 high rates or blocking control transfers can overrun it. Overflow is explicit,
 but reliable peak throughput needs hardware qualification and possibly buffered
 RX. Pico flush restarts its RX state machine and discards any partial frame.
+F103's 36 MHz UART clock permits 550–2,250,000 baud with its 16-bit divider;
+requests below 550 are rejected even though the shared protocol's preliminary
+range check starts at 300.
+
+CH32 READ_PROG_INFO starts a fresh host session and cancels abandoned bulk work.
+Its forced erase-busy windows survive unrelated commands; bulk operations wait
+cancellably and retain the original 25 ms settling delay. Auxiliary transfers
+use endpoint-indexed cancellation guards, including cleanup of late CH32 tokens.
+Hardware testing of those controller races remains required.
 
 Hotplug/reconnect and automatic daemon supervision are not implemented; restart
 the daemon after a USB disconnect. Host tooling is Linux/Unix-specific (PTY,

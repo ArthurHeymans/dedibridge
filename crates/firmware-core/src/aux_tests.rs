@@ -35,6 +35,7 @@ impl UartRx for FakeRx {
 struct Ep {
     info: EndpointInfo,
     packets: Rc<RefCell<Vec<Vec<u8>>>>,
+    blocked: bool,
 }
 impl Endpoint for Ep {
     fn info(&self) -> &EndpointInfo {
@@ -44,6 +45,9 @@ impl Endpoint for Ep {
 }
 impl EndpointIn for Ep {
     async fn write(&mut self, data: &[u8]) -> Result<(), EndpointError> {
+        if self.blocked {
+            return core::future::pending().await;
+        }
         self.packets.borrow_mut().push(data.to_vec());
         Ok(())
     }
@@ -62,7 +66,36 @@ fn ep(direction: Direction) -> Ep {
             interval_ms: 0,
         },
         packets: Default::default(),
+        blocked: false,
     }
+}
+#[test]
+fn positive_pulse_releases_while_its_usb_response_is_stalled() {
+    use crate::gpio::{BoardGpio, tests::Pin};
+    use embedded_hal::digital::InputPin;
+    let state = AuxState::new(DeviceInfo::new(1, 0x3f, 3_000_000));
+    let reset = Pin::new(true);
+    let mut monitor = reset.clone();
+    let gpio = BoardGpio::new(reset, Pin::new(true), Pin::new(true), Pin::new(false));
+    let mut input = ep(Direction::In);
+    input.blocked = true;
+    block_on(async {
+        let mut gpio_task = core::pin::pin!(state.run_gpio(gpio));
+        let mut response = core::pin::pin!(
+            state.command(&mut input, &[CMD_GPIO_PULSE_LOW, 1, 3, GPIO_RESET, 5, 0])
+        );
+        assert!(poll!(response.as_mut()).is_pending());
+        assert!(poll!(gpio_task.as_mut()).is_pending());
+        assert!(monitor.is_low().unwrap());
+        assert!(poll!(response.as_mut()).is_pending());
+        Timer::after_millis(10).await;
+        assert!(poll!(gpio_task.as_mut()).is_pending());
+        assert!(
+            monitor.is_high().unwrap(),
+            "pulse was held by stalled USB response"
+        );
+        assert!(poll!(response.as_mut()).is_pending());
+    });
 }
 fn rx(error: bool) -> FakeRx {
     FakeRx {

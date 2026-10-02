@@ -169,6 +169,17 @@ fn execute(
                 Request::Direction { mask, values } if output_mask(mask) => {
                     (CMD_GPIO_SET_DIRECTION, vec![mask, values])
                 }
+                Request::Set { mask, values } if output_mask(mask) => {
+                    // One actor operation: no other client's GPIO command can
+                    // interleave the original direction-then-output sequence.
+                    gpio_state(request(
+                        device,
+                        session,
+                        CMD_GPIO_SET_DIRECTION,
+                        &[mask, mask],
+                    )?)?;
+                    (CMD_GPIO_SET_OUTPUT, vec![mask, values])
+                }
                 Request::Output { mask, values } if output_mask(mask) => {
                     (CMD_GPIO_SET_OUTPUT, vec![mask, values])
                 }
@@ -420,6 +431,70 @@ mod tests {
             thread::sleep(Duration::from_millis(1));
             Ok(None)
         }
+    }
+    #[test]
+    fn combined_set_enables_output_from_released_state_in_one_actor_operation() {
+        struct Gpio {
+            directions: u8,
+            outputs: u8,
+            calls: Vec<u8>,
+        }
+        impl DeviceIo for Gpio {
+            fn request(
+                &mut self,
+                kind: u8,
+                data: &[u8],
+                _: &mut dyn FnMut(Packet),
+            ) -> io::Result<Vec<u8>> {
+                self.calls.push(kind);
+                match kind {
+                    CMD_GPIO_SET_DIRECTION => {
+                        self.directions = (self.directions & !data[0]) | (data[1] & data[0])
+                    }
+                    CMD_GPIO_SET_OUTPUT => {
+                        self.outputs = (self.outputs & !data[0]) | (data[1] & data[0])
+                    }
+                    _ => panic!("unexpected GPIO command"),
+                }
+                Ok(vec![0, self.outputs, self.directions, 7])
+            }
+            fn event(&mut self) -> io::Result<Option<Packet>> {
+                Ok(None)
+            }
+        }
+        let info = parse_info(DeviceInfo::new(1, 0x3f, 3_000_000).as_bytes()).unwrap();
+        let mut device = Gpio {
+            directions: 0,
+            outputs: 3,
+            calls: vec![],
+        };
+        let mut session = None;
+        let state = execute(
+            &mut device,
+            &mut session,
+            Action::Control(Request::Set { mask: 1, values: 0 }),
+            "TEST",
+            &info,
+        )
+        .unwrap();
+        assert!(matches!(
+            state,
+            Response::State {
+                directions: 1,
+                outputs: 2,
+                ..
+            }
+        ));
+        assert_eq!(device.calls, [CMD_GPIO_SET_DIRECTION, CMD_GPIO_SET_OUTPUT]);
+        execute(
+            &mut device,
+            &mut session,
+            Action::Control(Request::Direction { mask: 1, values: 0 }),
+            "TEST",
+            &info,
+        )
+        .unwrap();
+        assert_eq!(device.directions, 0);
     }
     #[test]
     fn socket_session_round_trip_and_controls_during_uart() {

@@ -12,6 +12,7 @@ pub enum Request {
     Pulse { mask: u8, ms: u16 },
     Direction { mask: u8, values: u8 },
     Output { mask: u8, values: u8 },
+    Set { mask: u8, values: u8 },
     Serial { baud: u32 },
     Write { data: String },
     ResetInput,

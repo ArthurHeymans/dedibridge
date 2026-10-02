@@ -1,6 +1,6 @@
 #[cfg(test)]
 #[path = "gpio_tests.rs"]
-mod tests;
+pub(crate) mod tests;
 
 use core::convert::Infallible;
 use dedi_protocol::aux::*;

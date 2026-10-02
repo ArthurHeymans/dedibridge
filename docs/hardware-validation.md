@@ -6,18 +6,29 @@ host mocks with hardware qualification.
 
 ## Software validation
 
-Local validation passes 17 Rust tests, host/core/protocol Clippy with warnings
-denied, Go race tests, and the patched dutctl serial-module/configuration tests.
-All three release ELFs link. Release section totals:
+Local validation passes 27 Rust tests, host/core/protocol and all three firmware
+Clippy targets with warnings denied, Go race tests, and the patched dutctl
+serial-module/configuration tests. Focused tests cover QPI dispatch, abandoned
+IN/OUT session cancellation (including maximum-size IN), erase-window retention,
+wait/settle/cancellation, endpoint-indexed guard lifetimes/final ACK and exactly-once cached OUT/reset
+invalidation, named GPIO
+commands/combined set, successful/USB-failed multi-block IN/OUT pipeline termination,
+independent positive-duration pulse release despite a
+stalled USB reply, and preservation of PASS/BUSY on failure. The endpoint
+mocks validate the transport contract, **not CH32 register timing**.
+
+All three release ELFs link. Local artifact generation and actionlint pass;
+Pico UF2 blocks were checked for magic, RP2040 family, addresses, and ordering.
+GitHub-hosted CI/tag publishing itself has not been run. Release section totals:
 
 | Target | Flash (`text + data`) | Static RAM (`data + bss`) |
 |---|---:|---:|
-| RP2040 | 64,000 B | 7,348 B |
-| CH32V307 | 43,614 B | 10,496 B |
-| STM32F103C8 | 56,492 B | 7,764 B |
+| RP2040 | 64,212 B | 7,364 B |
+| CH32V307 | 46,170 B | 11,056 B |
+| STM32F103C8 | 58,268 B | 7,788 B |
 
 Small linker alignment gaps are excluded. Static RAM includes task storage and
-RTT buffers, but not peak interrupt/runtime stack use. F103 leaves about 8.8 KiB
+RTT buffers, but not peak interrupt/runtime stack use. F103 leaves about 7.1 KiB
 flash and 12.4 KiB RAM before runtime stack use; USB PMA is separate. The retained
 PIO dependency emits a third-party `proc-macro-error2` future-compatibility
 warning; it does not currently fail the build.
@@ -35,10 +46,18 @@ For each board:
    must be 512-byte MPS on a high-speed link.
 3. Run flashprog identify, read twice and compare, write a disposable image,
    verify, and read it back. Exercise 3- and 4-byte addressing. Pico: additionally
-   exercise dual/quad reads; CH32/F103 must reject those modes.
+   exercise dual/quad reads; CH32/F103 must reject those modes. For Pico's
+   experimental QPI path, capture all opcode/address/data widths and qualify a
+   documented flash's QPI entry/read/exit sequence; ordinary transceive/program
+   commands remain single-lane. Do not infer QPI qualification from dispatch tests.
 4. Kill flashprog during IN and OUT bulk transfers, unplug/reset USB, and start
    a fresh session without rebooting the MCU. Observe CS release, endpoint
-   recovery, queued verify behavior, final-packet delivery and error LEDs.
+   recovery, queued verify behavior, final-packet delivery and error LEDs. On
+   CH32, READ_PROG_INFO without a USB reset must cancel abandoned IN/OUT before
+   a new SPI probe. Erase then WREN/WRDI/status must preserve synthetic WIP; bulk
+   reads/writes submitted early must wait through every erase window plus settling.
+   Repeat against a delayed-WIP emulator. Set PASS/BUSY, induce an error, and
+   confirm only ERROR is added.
 5. Start the daemon with explicit serial selection. Attach UART through the
    socket/PTY at 115200, then a lower/higher baud. Verify binary bytes, framing
    errors, full TX queues, and that baud changes wait until TX is physically idle.
@@ -55,7 +74,16 @@ For each board:
 
 F103-specific risks to verify: clone/pull-up differences, D+ startup reset,
 SPI2 pin mode transitions, DMA IRQ routing, final bulk-IN completion before
-endpoint cleanup, and recovery after a bus reset/deconfiguration.
+endpoint cleanup, and recovery after a bus reset/deconfiguration. Test at the
+550-baud lower divider limit too; lower rates must fail explicitly.
+
+CH32-specific USB checks: send GPIO_GET_STATE with no IN reader; let the 100 ms
+response timeout elapse, then read late while UART is quiet. Both auxiliary and
+SF600 commands must still progress. Repeat with completion pending exactly at
+timeout, in-flight completion arriving after cleanup, cancelled OUT reception,
+and bus reset/deconfiguration during cancellation. Confirm DATA toggles advance
+exactly once, completed packets are not discarded, and another endpoint's pending
+completion is never cleared. These races require real controller traces.
 
 RP2040-specific risks to verify: the retained direct-register EP2 double-buffer
 fast path/reservation, final-buffer draining, cancellation at a DMA boundary,

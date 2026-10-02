@@ -8,7 +8,7 @@ use dedi_core::{
     flash::SingleFlash,
     gpio::{BoardGpio, Leds},
     handler::DediprogHandler,
-    transport::{UsbIn, UsbOut},
+    transport::{GuardedEndpoint, UsbIn, UsbOut},
 };
 use dedi_protocol::{aux::DeviceInfo, identity::DeviceIdentity};
 use defmt_rtt as _;
@@ -136,7 +136,11 @@ async fn bulk_task(shared: &'static FlashShared, input: In, output: Out) {
 }
 #[embassy_executor::task]
 async fn aux_task(output: Out, input: In) {
-    AUX.run_usb(output, input).await;
+    AUX.run_usb(
+        GuardedEndpoint::<_, StmRecovery>::new(output),
+        GuardedEndpoint::<_, StmRecovery>::new(input),
+    )
+    .await;
 }
 #[embassy_executor::task]
 async fn rx_task(rx: StmRx) {

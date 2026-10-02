@@ -22,6 +22,11 @@ type bridgeRequest struct {
 
 func testBridge(t *testing.T, run func(net.Conn, *json.Decoder, *json.Encoder)) string {
 	t.Helper()
+	return testBridgeWithVersion(t, 1, run)
+}
+
+func testBridgeWithVersion(t *testing.T, version int, run func(net.Conn, *json.Decoder, *json.Encoder)) string {
+	t.Helper()
 	socket := filepath.Join(t.TempDir(), "d.sock")
 	listener, err := net.Listen("unix", socket)
 	if err != nil {
@@ -43,7 +48,7 @@ func testBridge(t *testing.T, run func(net.Conn, *json.Decoder, *json.Encoder)) 
 		if open.Op != "serial" || open.Baud != 115200 {
 			return
 		}
-		_ = encoder.Encode(bridgeMessage{Type: "ready", Version: 1})
+		_ = encoder.Encode(bridgeMessage{Type: "ready", Version: version})
 		run(conn, decoder, encoder)
 	}()
 	return socket
@@ -135,7 +140,16 @@ func TestDediBridgeCloseUnblocksPendingCommand(t *testing.T) {
 	}
 }
 
-func TestDediBridgeOverflowAndVersionAreErrors(t *testing.T) {
+func TestDediBridgeRejectsIncompatibleReadyVersion(t *testing.T) {
+	socket := testBridgeWithVersion(t, 2, func(net.Conn, *json.Decoder, *json.Encoder) {})
+	p, err := openDediPort(socket, 115200)
+	if err == nil {
+		_ = p.Close()
+		t.Fatal("incompatible ready version accepted")
+	}
+}
+
+func TestDediBridgeOverflowAndOversizedFramesAreErrors(t *testing.T) {
 	socket := testBridge(t, func(conn net.Conn, decoder *json.Decoder, encoder *json.Encoder) {
 		_ = encoder.Encode(bridgeMessage{Type: "error", Message: "UART overflow"})
 	})
