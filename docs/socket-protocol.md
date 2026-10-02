@@ -121,7 +121,36 @@ immediately; otherwise a fast prompt could be discarded between the response
 and the caller returning. The Go adapter implements that ordering.
 
 Device overflow, client-buffer overflow, a slow/stalled reader, USB disconnect,
-or a failed write invalidates the serial session. No bytes are silently dropped
-while reporting success. GPIO connections remain independent. Close releases
-the lease; already accepted UART bytes may still finish transmitting. There is
-no session replay, automatic hotplug reconnection, or console broadcast.
+or a failed write invalidates the serial session. The host does not knowingly
+discard bytes while reporting success. **CH32's current per-byte RX DMA still
+has an unqualified silent-loss gap between reads; its reported loss count is
+not a completeness guarantee.** GPIO connections remain independent. Close
+releases the lease; already accepted UART bytes may still finish transmitting.
+There is no session replay or console broadcast.
+
+### Reconnect and uncertain execution
+
+The daemon keeps its socket alive after transport failure and tries to reopen
+only the USB serial resolved at its first successful open (even without
+`--serial`). It revalidates GET_INFO protocol version and board before accepting
+new work. While absent/revalidating, requests fail immediately with `device not
+present`; they are not queued. Every accepted actor action carries the current
+connection generation. Actions from an earlier generation are rejected before
+accessing USB, including GPIO, serial attach, and detach.
+
+Disconnect or an ambiguous USB command failure closes all old serial sessions.
+The daemon does not resume a console, PTY, or dutctl run, restore GPIO state, or
+replay a command. Open a new serial connection after reconnect; it sets baud
+and flushes RX again. Old PTYs are not repointed to the new session. A successful
+reopen does not prove that the MCU rebooted or that earlier DUT actions failed.
+
+A timeout or disconnect during a UART write/GPIO command leaves execution
+uncertain: some bytes may have reached the DUT, or a pulse may already have
+started. `written` is reported only when every firmware chunk is acknowledged;
+on error the number of bytes delivered is unknown. The Go adapter's partial
+write count includes only acknowledged **socket** chunks (up to 4096 bytes), not
+an unknown prefix of the failed chunk. Do not automatically retry that prefix.
+Only an explicit BUSY reply is retried, because it rejects the command without
+side effects. Malformed unsolicited packets fail an active serial session and
+recycle the IN buffer; transport errors or invalid/missing command replies
+invalidate the connection. Sustained UART rates remain hardware-unqualified.

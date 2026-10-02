@@ -109,6 +109,47 @@ func TestDediBridgeSerialAndFlushBarrier(t *testing.T) {
 	}
 }
 
+func TestDediBridgeDisconnectMidWriteDoesNotReplay(t *testing.T) {
+	chunks := make(chan []int, 1)
+	socket := testBridge(t, func(_ net.Conn, decoder *json.Decoder, encoder *json.Encoder) {
+		var lengths []int
+		for i := 0; i < 2; i++ {
+			var request bridgeRequest
+			if decoder.Decode(&request) != nil || request.Op != "write" {
+				chunks <- lengths
+				return
+			}
+			data, _ := base64.StdEncoding.DecodeString(request.Data)
+			lengths = append(lengths, len(data))
+			if i == 0 {
+				_ = encoder.Encode(bridgeMessage{Type: "written"})
+			}
+		}
+		// The second chunk may have executed, but its reply was lost.
+		chunks <- lengths
+	})
+	p, err := openDediPort(socket, 115200)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	written, err := p.Write(make([]byte, 5000))
+	if err == nil || written != 4096 {
+		t.Fatalf("ambiguous partial write: %d %v", written, err)
+	}
+	if n, err := p.Write([]byte("no replay")); err == nil || n != 0 {
+		t.Fatalf("failed session reused: %d %v", n, err)
+	}
+	select {
+	case lengths := <-chunks:
+		if len(lengths) != 2 || lengths[0] != 4096 || lengths[1] != 904 {
+			t.Fatalf("unexpected chunks: %v", lengths)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("server did not receive the original chunks")
+	}
+}
+
 func TestDediBridgeCloseUnblocksPendingCommand(t *testing.T) {
 	waiting := make(chan struct{})
 	socket := testBridge(t, func(conn net.Conn, decoder *json.Decoder, encoder *json.Encoder) {

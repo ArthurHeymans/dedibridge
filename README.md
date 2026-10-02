@@ -26,7 +26,9 @@ RP2040 fast path, still need hardware validation. Building is not evidence of
 successful flashing or USB interoperability. The independent
 [parity re-review](docs/parity-review.md) closes all eight reported software
 findings, with hardware qualification still required. See
-[hardware checks](docs/hardware-validation.md).
+[hardware checks](docs/hardware-validation.md). The subsequent
+[Opus reliability design review](docs/reliability-design-review.md) identifies
+additional UART correctness and recovery work; it is not a hardware sign-off.
 
 ## Build and flash
 
@@ -166,10 +168,12 @@ firmware TX queue, not delivered to or acknowledged by the DUT. Already accepted
 UART bytes are not cancelled by closing a client. GPIO pulses run in a separate
 firmware task and still release if USB stalls or disconnects.
 
-CH32 UART currently retains byte-at-a-time RX DMA from the original firmware;
-high rates or blocking control transfers can overrun it. Overflow is explicit,
-but reliable peak throughput needs hardware qualification and possibly buffered
-RX. Pico flush restarts its RX state machine and discards any partial frame.
+CH32 UART currently retains byte-at-a-time RX DMA from the original firmware.
+The pinned HAL can discard a byte arriving between reads without reporting
+loss; CH32 loss counters are therefore not yet trustworthy as a completeness
+check. Continuous buffered RX is a planned correctness fix, not merely a
+throughput optimization. Maximum advertised baud is a configuration limit,
+not a qualified sustained-throughput rating on any board. Pico flush restarts its RX state machine and discards any partial frame.
 F103's 36 MHz UART clock permits 550–2,250,000 baud with its 16-bit divider;
 requests below 550 are rejected even though the shared protocol's preliminary
 range check starts at 300.
@@ -180,9 +184,13 @@ cancellably and retain the original 25 ms settling delay. Auxiliary transfers
 use endpoint-indexed cancellation guards, including cleanup of late CH32 tokens.
 Hardware testing of those controller races remains required.
 
-Hotplug/reconnect and automatic daemon supervision are not implemented; restart
-the daemon after a USB disconnect. Host tooling is Linux/Unix-specific (PTY,
-Unix socket, `nusb`). Protocol additions require the combined firmware; the
+After USB failure the daemon keeps its socket, fails existing serial sessions,
+and rediscovers only its originally selected serial, revalidating board/version.
+Requests fail fast while absent; queued old-generation actions are rejected and
+no commands, GPIO state, or sessions are replayed. Reopen the console/PTY or start
+a new dutctl run after reconnect. See the [uncertain-execution contract](docs/socket-protocol.md#reconnect-and-uncertain-execution).
+Automatic process supervision and firmware watchdog resets are not enabled.
+Host tooling is Linux/Unix-specific (PTY, Unix socket, `nusb`). Protocol additions require the combined firmware; the
 host deliberately rejects an old auxiliary interface without GET_INFO/version
 support.
 

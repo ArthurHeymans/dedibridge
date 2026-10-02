@@ -155,7 +155,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Command::Daemon { serial } => {
             let (device, serial) = device::Device::open(serial.as_deref())?;
-            return Ok(daemon::run(&socket, daemon::spawn(device, serial)?)?);
+            let reconnect_serial = serial.clone();
+            let actor = daemon::spawn(device, serial, move || {
+                device::Device::open(Some(&reconnect_serial))
+            })?;
+            return Ok(daemon::run(&socket, actor)?);
         }
         Command::Console { baud } => {
             let input = std::fs::File::open("/dev/stdin")?;

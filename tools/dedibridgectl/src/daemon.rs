@@ -12,12 +12,12 @@ use std::{
     },
     path::Path,
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, Ordering},
         mpsc::{self, Receiver, SyncSender},
     },
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 #[derive(Clone)]
@@ -29,6 +29,11 @@ struct Session {
     token: u64,
     sink: Sink,
 }
+impl Drop for Session {
+    fn drop(&mut self) {
+        self.sink.failed.store(true, Ordering::SeqCst);
+    }
+}
 pub enum Action {
     Control(Request),
     Attach { token: u64, baud: u32, sink: Sink },
@@ -37,19 +42,52 @@ pub enum Action {
     Detach { token: u64 },
 }
 struct Message {
+    generation: u64,
     action: Action,
+    stream_reply: bool,
     reply: SyncSender<Response>,
+}
+#[derive(Clone, Copy)]
+struct Availability {
+    generation: u64,
+    present: bool,
 }
 #[derive(Clone)]
 pub struct Actor {
     tx: SyncSender<Message>,
+    availability: Arc<Mutex<Availability>>,
 }
 impl Actor {
     pub fn call(&self, action: Action) -> io::Result<Response> {
+        self.call_inner(action, false)
+    }
+    fn call_stream(&self, action: Action) -> io::Result<Response> {
+        self.call_inner(action, true)
+    }
+    fn call_inner(&self, action: Action, stream_reply: bool) -> io::Result<Response> {
         let (reply, rx) = mpsc::sync_channel(1);
+        // Admission is the generation snapshot, not the channel send. If the
+        // bounded queue delays sending across a disconnect, dispatch still
+        // rejects this old-generation action. Never hold the state lock while
+        // blocking on the channel (the actor also needs that lock).
+        let generation = {
+            let state = self.availability.lock().unwrap();
+            if !state.present {
+                return Err(io::Error::new(
+                    io::ErrorKind::NotConnected,
+                    "device not present",
+                ));
+            }
+            state.generation
+        };
         self.tx
-            .send(Message { action, reply })
-            .map_err(|_| io::Error::other("USB actor stopped"))?;
+            .send(Message {
+                generation,
+                action,
+                stream_reply,
+                reply,
+            })
+            .map_err(|_| io::Error::new(io::ErrorKind::NotConnected, "USB actor stopped"))?;
         rx.recv()
             .map_err(|_| io::Error::other("USB actor stopped"))?
             .check()
@@ -194,36 +232,181 @@ fn execute(
     }
 }
 
-pub fn spawn(mut device: impl DeviceIo + Send + 'static, serial: String) -> io::Result<Actor> {
-    let info = parse_info(&device.request(CMD_GET_INFO, &[], &mut |_| {})?)?;
+fn fail_session(session: &mut Option<Session>) {
+    if let Some(active) = session.as_ref() {
+        active.sink.failed.store(true, Ordering::SeqCst);
+    }
+}
+
+fn invalidate(session: &mut Option<Session>, availability: &Mutex<Availability>) {
+    let mut state = availability.lock().unwrap();
+    state.present = false;
+    state.generation = state
+        .generation
+        .checked_add(1)
+        .expect("device generation exhausted");
+    fail_session(session);
+    *session = None;
+}
+
+// Fail closed even if the actor exits unexpectedly (including a panic).
+struct ActorLife(Arc<Mutex<Availability>>);
+impl Drop for ActorLife {
+    fn drop(&mut self) {
+        self.0.lock().unwrap().present = false;
+    }
+}
+
+fn validate_identity(
+    serial: &str,
+    expected: &Info,
+    found_serial: &str,
+    found: &Info,
+) -> io::Result<()> {
+    if serial != found_serial || expected.board != found.board || expected.version != found.version
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "reconnected device identity changed",
+        ));
+    }
+    Ok(())
+}
+
+fn dispatch(
+    device: &mut impl DeviceIo,
+    session: &mut Option<Session>,
+    action: Action,
+    generation_state: (u64, Availability),
+    serial: &str,
+    info: &Info,
+) -> io::Result<Response> {
+    let (generation, state) = generation_state;
+    if !state.present || generation != state.generation {
+        return Err(io::Error::new(
+            io::ErrorKind::NotConnected,
+            "device connection changed; command not executed",
+        ));
+    }
+    execute(device, session, action, serial, info)
+}
+
+pub fn spawn<D: DeviceIo + Send + 'static>(
+    mut device: D,
+    serial: String,
+    mut reconnect: impl FnMut() -> io::Result<(D, String)> + Send + 'static,
+) -> io::Result<Actor> {
+    let mut info = parse_info(&device.request(CMD_GET_INFO, &[], &mut |_| {})?)?;
     let (tx, rx) = mpsc::sync_channel::<Message>(16);
+    let availability = Arc::new(Mutex::new(Availability {
+        generation: 1,
+        present: true,
+    }));
+    let actor = Actor {
+        tx,
+        availability: availability.clone(),
+    };
     thread::spawn(move || {
-        let mut session = None;
+        let _life = ActorLife(availability.clone());
+        let mut device = Some(device);
+        let mut session: Option<Session> = None;
+        let mut next_open = Instant::now();
         loop {
-            match rx.try_recv() {
-                Ok(message) => {
-                    let response =
-                        execute(&mut device, &mut session, message.action, &serial, &info)
-                            .unwrap_or_else(Response::error);
-                    let _ = message.reply.send(response);
-                }
-                Err(mpsc::TryRecvError::Disconnected) => break,
-                Err(mpsc::TryRecvError::Empty) => {}
-            }
-            match device.event() {
-                Ok(Some(packet)) => event(&mut session, packet),
-                Ok(None) => {}
-                Err(error) => {
-                    eprintln!("USB disconnected: {error}");
-                    if let Some(active) = session.take() {
-                        active.sink.failed.store(true, Ordering::SeqCst);
+            if let Some(active) = device.as_mut() {
+                match rx.try_recv() {
+                    Ok(message) => {
+                        let reply_sink = if message.stream_reply {
+                            match (&message.action, session.as_ref()) {
+                                (
+                                    Action::Write { token, .. } | Action::Flush { token },
+                                    Some(client),
+                                ) if *token == client.token => Some(client.sink.clone()),
+                                _ => None,
+                            }
+                        } else {
+                            None
+                        };
+                        let state = *availability.lock().unwrap();
+                        let response = dispatch(
+                            active,
+                            &mut session,
+                            message.action,
+                            (message.generation, state),
+                            &serial,
+                            &info,
+                        )
+                        .unwrap_or_else(Response::error);
+                        // Command replies and UART DATA use the same actor
+                        // producer. In particular, post-flush DATA cannot race
+                        // the socket thread and overtake ResetInput.
+                        if let Some(sink) = reply_sink
+                            && sink.tx.try_send(response.clone()).is_err()
+                        {
+                            sink.failed.store(true, Ordering::SeqCst);
+                        }
+                        if active.link_failed() {
+                            invalidate(&mut session, &availability);
+                            device = None;
+                            next_open = Instant::now() + Duration::from_millis(500);
+                        }
+                        let _ = message.reply.send(response);
                     }
-                    break;
+                    Err(mpsc::TryRecvError::Disconnected) => break,
+                    Err(mpsc::TryRecvError::Empty) => {}
+                }
+                if let Some(active) = device.as_mut() {
+                    match active.event() {
+                        Ok(Some(packet)) => event(&mut session, packet),
+                        Ok(None) => {}
+                        Err(error)
+                            if error.kind() == io::ErrorKind::InvalidData
+                                && !active.link_failed() =>
+                        {
+                            eprintln!("Malformed USB packet; serial session failed: {error}");
+                            fail_session(&mut session);
+                        }
+                        Err(error) => {
+                            eprintln!("USB connection failed: {error}");
+                            invalidate(&mut session, &availability);
+                            device = None;
+                            next_open = Instant::now() + Duration::from_millis(500);
+                        }
+                    }
+                }
+            } else {
+                // Retire every old-generation message without touching USB.
+                match rx.recv_timeout(Duration::from_millis(50)) {
+                    Ok(message) => {
+                        let _ = message.reply.send(Response::error(
+                            "device connection changed; command not executed",
+                        ));
+                    }
+                    Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                    Err(mpsc::RecvTimeoutError::Timeout) => {}
+                }
+                if Instant::now() >= next_open {
+                    let opened = reconnect().and_then(|(mut candidate, found_serial)| {
+                        let found =
+                            parse_info(&candidate.request(CMD_GET_INFO, &[], &mut |_| {})?)?;
+                        validate_identity(&serial, &info, &found_serial, &found)?;
+                        Ok((candidate, found))
+                    });
+                    match opened {
+                        Ok((candidate, found)) => {
+                            device = Some(candidate);
+                            info = found;
+                            availability.lock().unwrap().present = true;
+                            eprintln!("USB reconnected: {serial}; old sessions remain closed");
+                        }
+                        Err(error) => eprintln!("Waiting for {serial}: {error}"),
+                    }
+                    next_open = Instant::now() + Duration::from_millis(500);
                 }
             }
         }
+        fail_session(&mut session);
     });
-    Ok(Actor { tx })
+    Ok(actor)
 }
 
 struct Lease {
@@ -308,13 +491,9 @@ pub fn serve(mut socket: UnixStream, actor: Actor, token: u64) -> io::Result<()>
                     ));
                 }
             };
-            let response = actor.call(action).unwrap_or_else(Response::error);
-            let fatal = matches!(response, Response::Error { .. });
-            if tx.try_send(response).is_err() {
-                failed.store(true, Ordering::SeqCst);
-                break;
-            }
-            if fatal {
+            if let Err(error) = actor.call_stream(action) {
+                // Admission failures have no actor-produced stream reply.
+                let _ = tx.try_send(Response::error(error));
                 break;
             }
         }
@@ -433,6 +612,260 @@ mod tests {
         }
     }
     #[test]
+    fn disconnected_admission_and_old_generation_commands_fail_closed() {
+        let (tx, queued) = mpsc::sync_channel(16);
+        let availability = Arc::new(Mutex::new(Availability {
+            generation: 1,
+            present: true,
+        }));
+        let actor = Actor {
+            tx,
+            availability: availability.clone(),
+        };
+        let (sink_tx, _) = mpsc::sync_channel(1);
+        let failed = Arc::new(AtomicBool::new(false));
+        let mut session = Some(Session {
+            token: 1,
+            sink: Sink {
+                tx: sink_tx,
+                failed: failed.clone(),
+            },
+        });
+        invalidate(&mut session, &availability);
+        assert!(failed.load(Ordering::SeqCst));
+        assert!(session.is_none());
+        assert_eq!(
+            actor
+                .call(Action::Control(Request::State))
+                .err()
+                .unwrap()
+                .kind(),
+            io::ErrorKind::NotConnected
+        );
+        assert!(matches!(queued.try_recv(), Err(mpsc::TryRecvError::Empty)));
+        availability.lock().unwrap().present = true;
+        let state = *availability.lock().unwrap();
+        let info = parse_info(DeviceInfo::new(3, 1, 3_000_000).as_bytes()).unwrap();
+        let mut device = Fake { writes: vec![] };
+        let (sink_tx, _) = mpsc::sync_channel(1);
+        for action in [
+            Action::Write {
+                token: 1,
+                data: vec![42],
+            },
+            Action::Control(Request::Pulse { mask: 1, ms: 500 }),
+            Action::Attach {
+                token: 2,
+                baud: 115200,
+                sink: Sink {
+                    tx: sink_tx,
+                    failed,
+                },
+            },
+        ] {
+            assert_eq!(
+                dispatch(&mut device, &mut session, action, (1, state), "TEST", &info)
+                    .err()
+                    .unwrap()
+                    .kind(),
+                io::ErrorKind::NotConnected
+            );
+        }
+        assert!(device.writes.is_empty());
+        assert!(session.is_none());
+    }
+    #[test]
+    fn flush_reply_precedes_immediate_post_barrier_data() {
+        struct FlushSource {
+            fake: Fake,
+            flushes: usize,
+            fresh: bool,
+        }
+        impl DeviceIo for FlushSource {
+            fn request(
+                &mut self,
+                kind: u8,
+                data: &[u8],
+                events: &mut dyn FnMut(Packet),
+            ) -> io::Result<Vec<u8>> {
+                if kind == CMD_UART_FLUSH_RX {
+                    self.flushes += 1;
+                    self.fresh = self.flushes > 1;
+                }
+                self.fake.request(kind, data, events)
+            }
+            fn event(&mut self) -> io::Result<Option<Packet>> {
+                if std::mem::take(&mut self.fresh) {
+                    return Ok(Some(Packet {
+                        kind: EVT_UART_DATA,
+                        id: 0,
+                        data: b"fresh".to_vec(),
+                    }));
+                }
+                self.fake.event()
+            }
+        }
+        let actor = spawn(
+            FlushSource {
+                fake: Fake { writes: vec![] },
+                flushes: 0,
+                fresh: false,
+            },
+            "TEST".into(),
+            || Err(io::ErrorKind::NotFound.into()),
+        )
+        .unwrap();
+        let (tx, events) = mpsc::sync_channel(4);
+        actor
+            .call(Action::Attach {
+                token: 1,
+                baud: 115200,
+                sink: Sink {
+                    tx,
+                    failed: Arc::new(AtomicBool::new(false)),
+                },
+            })
+            .unwrap();
+        actor.call_stream(Action::Flush { token: 1 }).unwrap();
+        assert!(matches!(
+            events.recv_timeout(Duration::from_secs(2)).unwrap(),
+            Response::ResetInput
+        ));
+        let Response::Data { data } = events.recv_timeout(Duration::from_secs(2)).unwrap() else {
+            panic!("expected fresh DATA")
+        };
+        assert_eq!(wire::decode(&data).unwrap(), b"fresh");
+    }
+    #[test]
+    fn reconnect_requires_original_identity() {
+        let info = parse_info(DeviceInfo::new(3, 1, 3_000_000).as_bytes()).unwrap();
+        validate_identity("A", &info, "A", &info).unwrap();
+        assert!(validate_identity("A", &info, "B", &info).is_err());
+        let mut changed = info.clone();
+        changed.board = 2;
+        assert!(validate_identity("A", &info, "A", &changed).is_err());
+        changed = info.clone();
+        changed.version = 2;
+        assert!(validate_identity("A", &info, "A", &changed).is_err());
+    }
+    #[test]
+    fn disconnect_during_write_invalidates_lease_and_reconnects_without_replay() {
+        struct Unplug {
+            fake: Fake,
+            failed: bool,
+            writes: Arc<std::sync::atomic::AtomicUsize>,
+            ready: Option<SyncSender<()>>,
+        }
+        impl DeviceIo for Unplug {
+            fn link_failed(&self) -> bool {
+                self.failed
+            }
+            fn request(
+                &mut self,
+                kind: u8,
+                data: &[u8],
+                events: &mut dyn FnMut(Packet),
+            ) -> io::Result<Vec<u8>> {
+                if kind == CMD_UART_WRITE {
+                    self.writes.fetch_add(1, Ordering::SeqCst);
+                    self.failed = true;
+                    return Err(io::ErrorKind::ConnectionAborted.into());
+                }
+                self.fake.request(kind, data, events)
+            }
+            fn event(&mut self) -> io::Result<Option<Packet>> {
+                if let Some(ready) = self.ready.take() {
+                    let _ = ready.send(());
+                }
+                self.fake.event()
+            }
+        }
+        let writes = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let (opened_tx, opened_rx) = mpsc::sync_channel(1);
+        let (allow_tx, allow_rx) = mpsc::sync_channel(1);
+        let (ready_tx, ready_rx) = mpsc::sync_channel(1);
+        let new_writes = writes.clone();
+        let actor = spawn(
+            Unplug {
+                fake: Fake { writes: vec![] },
+                failed: false,
+                writes: writes.clone(),
+                ready: None,
+            },
+            "TEST".into(),
+            move || {
+                opened_tx.send(()).unwrap();
+                allow_rx.recv().unwrap();
+                Ok((
+                    Unplug {
+                        fake: Fake { writes: vec![] },
+                        failed: false,
+                        writes: new_writes.clone(),
+                        ready: Some(ready_tx.clone()),
+                    },
+                    "TEST".into(),
+                ))
+            },
+        )
+        .unwrap();
+        let (sink_tx, _) = mpsc::sync_channel(1);
+        let failed = Arc::new(AtomicBool::new(false));
+        actor
+            .call(Action::Attach {
+                token: 1,
+                baud: 115200,
+                sink: Sink {
+                    tx: sink_tx,
+                    failed: failed.clone(),
+                },
+            })
+            .unwrap();
+        assert!(
+            actor
+                .call(Action::Write {
+                    token: 1,
+                    data: vec![42; 100]
+                })
+                .is_err()
+        );
+        assert!(failed.load(Ordering::SeqCst));
+        opened_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+        assert_eq!(
+            actor
+                .call(Action::Control(Request::State))
+                .err()
+                .unwrap()
+                .kind(),
+            io::ErrorKind::NotConnected
+        );
+        allow_tx.send(()).unwrap();
+        ready_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+        assert!(
+            actor
+                .call(Action::Write {
+                    token: 1,
+                    data: vec![99]
+                })
+                .is_err()
+        );
+        let (sink_tx, _) = mpsc::sync_channel(1);
+        actor
+            .call(Action::Attach {
+                token: 2,
+                baud: 115200,
+                sink: Sink {
+                    tx: sink_tx,
+                    failed: Arc::new(AtomicBool::new(false)),
+                },
+            })
+            .unwrap();
+        assert!(matches!(
+            actor.call(Action::Control(Request::State)).unwrap(),
+            Response::State { .. }
+        ));
+        assert_eq!(writes.load(Ordering::SeqCst), 1);
+    }
+    #[test]
     fn combined_set_enables_output_from_released_state_in_one_actor_operation() {
         struct Gpio {
             directions: u8,
@@ -498,7 +931,10 @@ mod tests {
     }
     #[test]
     fn socket_session_round_trip_and_controls_during_uart() {
-        let actor = spawn(Fake { writes: vec![] }, "TEST123".into()).unwrap();
+        let actor = spawn(Fake { writes: vec![] }, "TEST123".into(), || {
+            Err(io::ErrorKind::NotFound.into())
+        })
+        .unwrap();
         let (mut socket, server) = UnixStream::pair().unwrap();
         socket
             .set_read_timeout(Some(Duration::from_secs(2)))
