@@ -73,6 +73,69 @@ fn ep(direction: Direction) -> Ep {
     }
 }
 #[test]
+fn chunk_queue_wraps_without_short_write_loss_and_counts_only_full_pipe_drops() {
+    let state = AuxState::new(DeviceInfo::new(2, 1, 3_000_000));
+    let first = [1; 1000];
+    state.queue_rx(&first);
+    let mut read = [0; 990];
+    assert_eq!(state.rx.try_read(&mut read).unwrap(), 990);
+    assert_eq!(read, [1; 990]);
+    state.queue_rx(&[2; 61]); // crosses the pipe's physical end
+    let mut read = [0; 71];
+    let tail = state.rx.try_read(&mut read).unwrap();
+    let head = state.rx.try_read(&mut read[tail..]).unwrap();
+    assert_eq!(tail + head, 71);
+    assert_eq!(&read[..10], &[1; 10]);
+    assert_eq!(&read[10..], &[2; 61]);
+    assert_eq!(state.diagnostics.snapshot().rx_queue_dropped_bytes.get(), 0);
+    state.queue_rx(&[3; 1024]);
+    state.queue_rx(&[4; 61]);
+    let counters = state.diagnostics.snapshot();
+    assert_eq!(counters.rx_queue_dropped_bytes.get(), 61);
+    assert_eq!(counters.rx_queue_high_water.get(), 1024);
+    assert_eq!(state.rx_lost.load(Ordering::Relaxed), 61);
+    state.rx_lost.store(u32::MAX - 1, Ordering::Relaxed);
+    state.queue_rx(&[5; 61]);
+    assert_eq!(state.rx_lost.load(Ordering::Relaxed), u32::MAX);
+}
+
+#[test]
+fn usb_batches_queued_bytes_and_preserves_a_short_tail() {
+    let state = AuxState::new(DeviceInfo::new(2, 1, 3_000_000));
+    let bytes: Vec<u8> = (0..150).collect();
+    state.queue_rx(&bytes);
+    let input = ep(Direction::In);
+    let packets = input.packets.clone();
+    block_on(async {
+        let mut usb = core::pin::pin!(state.run_usb(ep(Direction::Out), input));
+        for _ in 0..20 {
+            assert!(poll!(usb.as_mut()).is_pending());
+            if state.rx.is_empty() && packets.borrow().len() >= 2 {
+                break;
+            }
+        }
+        assert!(packets.borrow().len() >= 2);
+        Timer::after_millis(2).await;
+        for _ in 0..8 {
+            assert!(poll!(usb.as_mut()).is_pending());
+            if packets.borrow().len() == 3 {
+                break;
+            }
+        }
+        let packets = packets.borrow();
+        assert_eq!(packets.len(), 3);
+        assert!(packets.iter().all(|packet| packet[0] == EVT_UART_DATA));
+        let data: Vec<_> = packets
+            .iter()
+            .flat_map(|packet| payload(packet).unwrap().iter().copied())
+            .collect();
+        assert_eq!(data, bytes);
+        assert_eq!(payload(&packets[0]).unwrap().len(), MAX_PAYLOAD_LEN);
+        assert_eq!(payload(&packets[2]).unwrap().len(), 28);
+    });
+}
+
+#[test]
 fn positive_pulse_releases_while_its_usb_response_is_stalled() {
     use crate::gpio::{BoardGpio, tests::Pin};
     use embedded_hal::digital::InputPin;
@@ -180,7 +243,7 @@ fn diagnostic_pages_are_read_only_and_keep_aux_version_one() {
             DeviceInfo::read_from_bytes(&payload(&packets.borrow()[0]).unwrap()[2..]).unwrap();
         assert_eq!(info.version, 1);
         assert_ne!(info.flags & CAP_DIAG, 0);
-        for page in 0..=3 {
+        for page in 0..=4 {
             state
                 .command(&mut input, &[CMD_GET_DIAG, page + 2, 1, page])
                 .await;
@@ -199,7 +262,7 @@ fn diagnostic_pages_are_read_only_and_keep_aux_version_one() {
     let activity = Activity::read_from_bytes(&payload(&packets[3]).unwrap()[2..]).unwrap();
     assert_eq!(activity.page, ACTIVITY_PAGE);
     assert_eq!(
-        payload(&packets[4]),
+        payload(&packets[5]),
         Some(&[CMD_GET_DIAG, STATUS_INVALID][..])
     );
     assert_eq!(state.rx_lost.load(Ordering::Relaxed), 3);
@@ -210,7 +273,7 @@ fn diagnostic_pages_are_read_only_and_keep_aux_version_one() {
 #[test]
 fn usb_delivery_loss_is_not_counted_as_a_uart_driver_error() {
     let state = AuxState::new(DeviceInfo::new(3, 1, 2_250_000));
-    state.rx.try_send(42).unwrap();
+    state.rx.try_write(&[42]).unwrap();
     let mut input = ep(Direction::In);
     input.blocked = true;
     let started = input.writes_started.clone();

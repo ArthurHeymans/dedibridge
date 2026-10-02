@@ -3,10 +3,10 @@ use crate::{
     gpio::BoardIo,
 };
 use dedi_protocol::aux::*;
-use dedi_protocol::diagnostics::{ACTIVITY_PAGE, HEALTH_PAGE, UART_PAGE};
+use dedi_protocol::diagnostics::{ACTIVITY_PAGE, DMA_RX_PAGE, HEALTH_PAGE, UART_PAGE};
 use embassy_futures::select::{Either, Either4, select, select4};
 use embassy_sync::{
-    blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel, signal::Signal,
+    blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel, pipe::Pipe, signal::Signal,
 };
 use embassy_time::{Duration, Instant, Timer, with_timeout};
 use embassy_usb::driver::{EndpointIn, EndpointOut};
@@ -18,6 +18,16 @@ pub struct UartError;
 
 pub trait UartRx {
     async fn read_byte(&mut self) -> Result<u8, UartError>;
+    /// Return an available nonempty chunk, never wait to fill the buffer.
+    /// Cancellation must not stop an independently running receiver. Copy and
+    /// commit must complete in one poll, without an await after consumption.
+    async fn read(&mut self, buffer: &mut [u8]) -> Result<usize, UartError> {
+        if buffer.is_empty() {
+            return Ok(0);
+        }
+        buffer[0] = self.read_byte().await?;
+        Ok(1)
+    }
     /// Reconfigure both RX and TX while TX is idle. Called only after the read
     /// future has been dropped; successful application, not queuing, is ACKed.
     fn set_baud(&mut self, baud: u32) -> Result<(), UartError>;
@@ -29,6 +39,12 @@ pub trait UartTx {
     /// Complete when the last stop bit is sent, so baud can change safely.
     async fn write(&mut self, data: &[u8]) -> Result<(), UartError>;
 }
+fn add_lost(counter: &AtomicU32, amount: u32) {
+    let _ = counter.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |count| {
+        Some(count.saturating_add(amount))
+    });
+}
+
 #[derive(Clone, Copy)]
 enum RxCommand {
     Baud(u32),
@@ -51,7 +67,7 @@ struct GpioCommand {
 pub struct AuxState {
     info: DeviceInfo,
     diagnostics: UartCounters,
-    rx: Channel<CriticalSectionRawMutex, u8, 256>,
+    rx: Pipe<CriticalSectionRawMutex, 1024>,
     tx: Channel<CriticalSectionRawMutex, TxPacket, 4>,
     baud: Signal<CriticalSectionRawMutex, RxCommand>,
     baud_result: Signal<CriticalSectionRawMutex, bool>,
@@ -69,7 +85,7 @@ impl AuxState {
         Self {
             info,
             diagnostics: UartCounters::new(),
-            rx: Channel::new(),
+            rx: Pipe::new(),
             tx: Channel::new(),
             baud: Signal::new(),
             baud_result: Signal::new(),
@@ -84,8 +100,9 @@ impl AuxState {
     }
     pub async fn run_rx(&self, mut uart: impl UartRx) -> ! {
         let mut budget = 0;
+        let mut bytes = [0; MAX_PAYLOAD_LEN];
         loop {
-            match select(self.baud.wait(), uart.read_byte()).await {
+            match select(self.baud.wait(), uart.read(&mut bytes)).await {
                 Either::First(command) => {
                     let result = match command {
                         RxCommand::Baud(baud) => uart.set_baud(baud),
@@ -93,31 +110,42 @@ impl AuxState {
                     };
                     self.baud_result.signal(result.is_ok());
                 }
-                Either::Second(Ok(byte)) => {
-                    self.diagnostics.rx_bytes_read.increment();
-                    if self.rx.try_send(byte).is_err() {
-                        self.diagnostics.rx_queue_dropped_bytes.increment();
-                        self.rx_lost.fetch_add(1, Ordering::Relaxed);
-                        self.loss.signal(());
-                    } else {
-                        self.diagnostics
-                            .rx_queue_high_water
-                            .maximum(self.rx.len() as u32);
-                    }
+                Either::Second(Ok(count)) if count > 0 && count <= bytes.len() => {
+                    self.queue_rx(&bytes[..count]);
+                    budget += count;
                 }
-                Either::Second(Err(_)) => {
+                Either::Second(_) => {
                     self.diagnostics.rx_driver_errors.increment();
-                    self.rx_lost.fetch_add(1, Ordering::Relaxed);
+                    add_lost(&self.rx_lost, 1);
                     self.loss.signal(());
                     Timer::after_millis(1).await;
                 }
             }
             // Continuous RX must not starve GPIO deadlines or USB servicing.
-            budget += 1;
-            if budget == 16 {
+            if budget >= MAX_PAYLOAD_LEN {
                 budget = 0;
                 embassy_futures::yield_now().await;
             }
+        }
+    }
+    fn queue_rx(&self, bytes: &[u8]) {
+        self.diagnostics.rx_bytes_read.add(bytes.len() as u32);
+        let mut written = 0;
+        // Pipe writes can be short at its physical end even with free space.
+        while written < bytes.len() {
+            let Ok(count) = self.rx.try_write(&bytes[written..]) else {
+                break;
+            };
+            written += count;
+            self.diagnostics
+                .rx_queue_high_water
+                .maximum(self.rx.len() as u32);
+        }
+        let lost = (bytes.len() - written) as u32;
+        if lost != 0 {
+            self.diagnostics.rx_queue_dropped_bytes.add(lost);
+            add_lost(&self.rx_lost, lost);
+            self.loss.signal(());
         }
     }
     pub async fn run_tx(&self, mut uart: impl UartTx) -> ! {
@@ -126,7 +154,7 @@ impl AuxState {
             self.tx_busy.store(true, Ordering::SeqCst);
             if uart.write(&packet.bytes[..packet.len]).await.is_err() {
                 self.diagnostics.tx_driver_errors.increment();
-                self.tx_lost.fetch_add(packet.len as u32, Ordering::Relaxed);
+                add_lost(&self.tx_lost, packet.len as u32);
                 self.loss.signal(());
             }
             self.tx_busy.store(false, Ordering::SeqCst);
@@ -227,6 +255,16 @@ impl AuxState {
                     self.response(ep, id, command, STATUS_OK, ACTIVITY.snapshot().as_bytes())
                         .await
                 }
+                DMA_RX_PAGE if self.info.board == 2 => {
+                    self.response(
+                        ep,
+                        id,
+                        command,
+                        STATUS_OK,
+                        diagnostics::RX_DMA.snapshot().as_bytes(),
+                    )
+                    .await
+                }
                 _ => self.response(ep, id, command, STATUS_INVALID, &[]).await,
             }
             return;
@@ -290,7 +328,7 @@ impl AuxState {
         } else if command == CMD_UART_FLUSH_RX && data.is_empty() {
             self.baud.signal(RxCommand::Flush);
             if self.baud_result.wait().await {
-                while self.rx.try_receive().is_ok() {}
+                self.rx.clear();
                 self.rx_lost.store(0, Ordering::Relaxed);
                 status = STATUS_OK;
             }
@@ -315,7 +353,7 @@ impl AuxState {
             match select4(
                 output.read(&mut usb_buf),
                 self.gpio_changed.wait(),
-                select(self.loss.wait(), self.rx.receive()),
+                select(self.loss.wait(), self.rx.read(&mut uart_buf[len..])),
                 Timer::at(deadline),
             )
             .await
@@ -336,12 +374,11 @@ impl AuxState {
                     self.packet(&mut input, EVT_GPIO_STATE, 0, &state).await;
                 }
                 Either4::Third(Either::First(())) => {}
-                Either4::Third(Either::Second(byte)) => {
+                Either4::Third(Either::Second(count)) => {
                     if len == 0 {
                         deadline = Instant::now() + Duration::from_millis(1);
                     }
-                    uart_buf[len] = byte;
-                    len += 1;
+                    len += count;
                 }
                 Either4::Fourth(()) => {}
             }
@@ -352,7 +389,7 @@ impl AuxState {
                 {
                     self.diagnostics.rx_delivery_failures.increment();
                     self.diagnostics.rx_delivery_dropped_bytes.add(len as u32);
-                    self.rx_lost.fetch_add(len as u32, Ordering::Relaxed);
+                    add_lost(&self.rx_lost, len as u32);
                 }
                 len = 0;
                 deadline = Instant::MAX;
@@ -363,7 +400,7 @@ impl AuxState {
                     let mut report = [direction, 0, 0, 0, 0];
                     report[1..].copy_from_slice(&lost.to_le_bytes());
                     if !self.packet(&mut input, EVT_UART_OVERFLOW, 0, &report).await {
-                        counter.fetch_add(lost, Ordering::Relaxed);
+                        add_lost(counter, lost);
                     }
                 }
             }

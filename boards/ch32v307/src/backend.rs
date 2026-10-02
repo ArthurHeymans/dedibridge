@@ -1,11 +1,13 @@
 use ch32_hal::{
-    gpio::Output,
+    dma::{ReadableRingBuffer, TransferOptions},
+    gpio::{Input, Output},
+    interrupt::typelevel::Interrupt,
     mode::Async,
     pac::gpio::vals,
-    peripherals::{SPI2, USART2},
+    peripherals::{DMA1_CH6, SPI2, USART2},
     spi::Spi,
     time::Hertz,
-    usart::{UartRx, UartTx},
+    usart::UartTx,
 };
 use dedi_core::{
     flash::{Error, SingleSpi},
@@ -81,36 +83,222 @@ impl SingleSpi for FlashBus {
     }
 }
 
-pub struct ChRx(pub UartRx<'static, USART2, Async>);
+pub const RX_RING_SIZE: usize = 4096;
+static RX_FAULT: portable_atomic::AtomicBool = portable_atomic::AtomicBool::new(false);
+pub struct RxInterrupt;
+impl ch32_hal::interrupt::typelevel::Handler<ch32_hal::interrupt::typelevel::USART2>
+    for RxInterrupt
+{
+    unsafe fn on_interrupt() {
+        // Only RX error interrupts are enabled. Latch the IRQ even if a
+        // concurrent DMA DR read has already cleared its status flags. Don't
+        // use HAL's read-future waker or clear status while DMA is running.
+        let uart = ch32_hal::pac::USART2;
+        uart.ctlr3().modify(|w| {
+            w.set_dmar(false);
+            w.set_eie(false);
+        });
+        uart.ctlr1().modify(|w| {
+            w.set_re(false);
+            w.set_peie(false);
+        });
+        RX_FAULT.store(true, portable_atomic::Ordering::Release);
+        dedi_core::diagnostics::RX_DMA.hardware_errors.increment();
+    }
+}
+pub struct ChRx {
+    _pin: Input<'static>,
+    ring: ReadableRingBuffer<'static, u8>,
+    progress: dedi_core::rx_ring::Progress,
+    baud: u32,
+    channel_config: u32,
+}
 pub struct ChTx(pub UartTx<'static, USART2, Async>);
-impl dedi_core::aux::UartRx for ChRx {
-    async fn read_byte(&mut self) -> Result<u8, dedi_core::aux::UartError> {
-        let mut byte = [0];
-        self.0
-            .read(&mut byte)
-            .await
-            .map_err(|_| dedi_core::aux::UartError)?;
-        Ok(byte[0])
+impl ChRx {
+    pub fn new(
+        pin: Input<'static>,
+        channel: ch32_hal::Peri<'static, DMA1_CH6>,
+        buffer: &'static mut [u8; RX_RING_SIZE],
+        baud: u32,
+    ) -> Result<Self, dedi_core::aux::UartError> {
+        // This object exclusively owns USART2 RX/CH6 and the static buffer.
+        // PA3/remap 0 and DMA1_CH6 are the hardware USART2 RX mapping.
+        let ring = unsafe {
+            ReadableRingBuffer::new(
+                channel,
+                (),
+                ch32_hal::pac::USART2.datar().as_ptr().cast::<u8>(),
+                buffer,
+                TransferOptions::default(),
+            )
+        };
+        let mut rx = Self {
+            _pin: pin,
+            ring,
+            progress: dedi_core::rx_ring::Progress::new(
+                RX_RING_SIZE,
+                baud,
+                embassy_time::Instant::now().as_micros(),
+            ),
+            baud,
+            channel_config: ch32_hal::pac::DMA1.ch(5).cr().read().0,
+        };
+        rx.restart(None)?;
+        Ok(rx)
     }
-    fn set_baud(&mut self, baud: u32) -> Result<(), dedi_core::aux::UartError> {
-        let mut config = ch32_hal::usart::Config::default();
-        config.baudrate = baud;
-        self.0
-            .set_config(&config)
-            .map_err(|_| dedi_core::aux::UartError)
-    }
-    async fn flush_rx(&mut self) -> Result<(), dedi_core::aux::UartError> {
-        // The read future's DMA guard has been dropped before this is called.
-        for _ in 0..16 {
-            let status = ch32_hal::pac::USART2.statr().read();
-            // STATR then DATAR clears stale overrun/framing flags too, even
-            // when DMA already consumed the last RXNE byte.
-            ch32_hal::pac::USART2.datar().read();
-            if !status.rxne() {
+    fn restart(&mut self, divider: Option<u16>) -> Result<(), dedi_core::aux::UartError> {
+        let uart = ch32_hal::pac::USART2;
+        let dma = ch32_hal::pac::DMA1;
+        // Disable reception, not just its requests: SR/DR clearing must not
+        // race new frames or a still-running circular DMA writer.
+        uart.ctlr3().modify(|w| {
+            w.set_dmar(false);
+            w.set_eie(false);
+        });
+        uart.ctlr1().modify(|w| {
+            w.set_re(false);
+            w.set_peie(false);
+        });
+        self.ring.request_stop();
+        for _ in 0..32 {
+            if !self.ring.is_running() {
                 break;
             }
         }
+        if self.ring.is_running() {
+            return Err(dedi_core::aux::UartError);
+        }
+        core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+        critical_section::with(|_| {
+            // HAL request_stop clears channel configuration. Restore it with
+            // EN clear, reload the physical position to zero, THEN clear the
+            // HAL consumer/count. clear() alone is not a running flush barrier.
+            dma.ch(5).cr().write(|w| {
+                w.0 = self.channel_config;
+                w.set_en(false);
+            });
+            dma.ch(5).ndtr().write(|w| w.set_ndt(RX_RING_SIZE as u16));
+            dma.ifcr().write(|w| {
+                w.set_htif(5, true);
+                w.set_tcif(5, true);
+                w.set_teif(5, true);
+            });
+            self.ring.clear();
+            uart.statr().read();
+            uart.datar().read();
+            RX_FAULT.store(false, portable_atomic::Ordering::Release);
+            ch32_hal::interrupt::typelevel::USART2::unpend();
+            if let Some(divider) = divider {
+                uart.ctlr1().modify(|w| w.set_ue(false));
+                uart.brr().write(|w| w.0 = u32::from(divider));
+                uart.ctlr1().modify(|w| w.set_ue(true));
+            }
+            self.progress = dedi_core::rx_ring::Progress::new(
+                RX_RING_SIZE,
+                self.baud,
+                embassy_time::Instant::now().as_micros(),
+            );
+            self.ring.start();
+            uart.ctlr1().modify(|w| {
+                w.set_re(true);
+                w.set_peie(true);
+                w.set_rxneie(false);
+                w.set_idleie(false);
+            });
+            uart.ctlr3().modify(|w| {
+                w.set_dmar(true);
+                w.set_eie(true);
+            });
+        });
+        unsafe {
+            ch32_hal::interrupt::typelevel::USART2::enable();
+        }
         Ok(())
+    }
+    fn observe(&mut self) -> Result<(), dedi_core::aux::UartError> {
+        let remaining = usize::from(ch32_hal::pac::DMA1.ch(5).ndtr().read().ndt());
+        if remaining > RX_RING_SIZE {
+            return Err(dedi_core::aux::UartError);
+        }
+        let position = (RX_RING_SIZE - remaining) % RX_RING_SIZE;
+        let result = self
+            .progress
+            .observe(position, embassy_time::Instant::now().as_micros());
+        dedi_core::diagnostics::RX_DMA
+            .ring_high_water
+            .maximum(self.progress.pending() as u32);
+        result.map_err(|_| dedi_core::aux::UartError)
+    }
+    fn available(&mut self, buffer: &mut [u8]) -> Result<usize, dedi_core::aux::UartError> {
+        if RX_FAULT.load(portable_atomic::Ordering::Acquire)
+            || !self.ring.is_running()
+            || !ch32_hal::pac::USART2.ctlr3().read().dmar()
+        {
+            return Err(dedi_core::aux::UartError);
+        }
+        self.observe()?;
+        // Let the HAL TC IRQ account a just-finished wrap before a read can
+        // reset its count. A late IRQ after a copy may still cause conservative
+        // failure; it must never turn uncertain data into a successful stream.
+        if ch32_hal::pac::DMA1.isr().read().tcif(5) {
+            return Ok(0);
+        }
+        let (count, _) = self
+            .ring
+            .read(buffer)
+            .map_err(|_| dedi_core::aux::UartError)?;
+        self.observe()?;
+        self.progress
+            .commit(count)
+            .map_err(|_| dedi_core::aux::UartError)?;
+        if RX_FAULT.load(portable_atomic::Ordering::Acquire) {
+            return Err(dedi_core::aux::UartError);
+        }
+        Ok(count)
+    }
+    async fn read_chunk(&mut self, buffer: &mut [u8]) -> Result<usize, dedi_core::aux::UartError> {
+        if buffer.is_empty() {
+            return Ok(0);
+        }
+        loop {
+            match self.available(buffer) {
+                Ok(0) => embassy_time::Timer::after_millis(1).await,
+                Ok(count) => return Ok(count),
+                Err(error) => {
+                    if !RX_FAULT.load(portable_atomic::Ordering::Acquire) {
+                        dedi_core::diagnostics::RX_DMA.progress_errors.increment();
+                    }
+                    let _ = self.restart(None);
+                    return Err(error);
+                }
+            }
+        }
+    }
+}
+impl dedi_core::aux::UartRx for ChRx {
+    async fn read_byte(&mut self) -> Result<u8, dedi_core::aux::UartError> {
+        let mut byte = [0];
+        self.read_chunk(&mut byte).await?;
+        Ok(byte[0])
+    }
+    async fn read(&mut self, buffer: &mut [u8]) -> Result<usize, dedi_core::aux::UartError> {
+        self.read_chunk(buffer).await
+    }
+    fn set_baud(&mut self, baud: u32) -> Result<(), dedi_core::aux::UartError> {
+        if baud == 0 {
+            return Err(dedi_core::aux::UartError);
+        }
+        let divider = (ch32_hal::rcc::clocks().pclk1.0 + baud / 2) / baud;
+        if !(16..=u32::from(u16::MAX)).contains(&divider) {
+            return Err(dedi_core::aux::UartError);
+        }
+        self.baud = baud;
+        // Core checked physical TX completion. Avoid HAL's RX/TX-swapped
+        // reconfigure path and preserve TX DMA/pin ownership.
+        self.restart(Some(divider as u16))
+    }
+    async fn flush_rx(&mut self) -> Result<(), dedi_core::aux::UartError> {
+        self.restart(None)
     }
 }
 impl dedi_core::aux::UartTx for ChTx {

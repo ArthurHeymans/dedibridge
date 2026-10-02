@@ -6,7 +6,7 @@ host mocks with hardware qualification.
 
 ## Software validation
 
-Local validation passes 27 Rust tests, host/core/protocol and all three firmware
+Local validation passes 45 Rust tests, host/core/protocol and all three firmware
 Clippy targets with warnings denied, Go race tests, and the patched dutctl
 serial-module/configuration tests. Focused tests cover QPI dispatch, abandoned
 IN/OUT session cancellation (including maximum-size IN), erase-window retention,
@@ -15,7 +15,12 @@ invalidation, named GPIO
 commands/combined set, successful/USB-failed multi-block IN/OUT pipeline termination,
 independent positive-duration pulse release despite a
 stalled USB reply, and preservation of PASS/BUSY on failure. The endpoint
-mocks validate the transport contract, **not CH32 register timing**.
+mocks validate the transport contract, **not CH32 register timing**. Reliability
+coverage also includes BUSY-only retry/no replay, partial writes, generation-safe
+reconnect and identity refusal, flush reply ordering, diagnostic compatibility
+and saturation, chunked queue wrap/full drops and USB short tails, and conservative
+DMA progress checks across wraps, long stalls, copy/commit, and fresh epochs.
+Those checks model accounting policy, not the HAL's physical DMA writer.
 
 All three release ELFs link. Local artifact generation and actionlint pass;
 Pico UF2 blocks were checked for magic, RP2040 family, addresses, and ordering.
@@ -23,13 +28,14 @@ GitHub-hosted CI/tag publishing itself has not been run. Release section totals:
 
 | Target | Flash (`text + data`) | Static RAM (`data + bss`) |
 |---|---:|---:|
-| RP2040 | 64,212 B | 7,364 B |
-| CH32V307 | 46,170 B | 11,056 B |
-| STM32F103C8 | 58,268 B | 7,788 B |
+| RP2040 | 68,728 B | 7,556 B |
+| CH32V307 | 52,036 B | 16,264 B |
+| STM32F103C8 | 63,996 B | 8,780 B |
 
 Small linker alignment gaps are excluded. Static RAM includes task storage and
-RTT buffers, but not peak interrupt/runtime stack use. F103 leaves about 7.1 KiB
-flash and 12.4 KiB RAM before runtime stack use; USB PMA is separate. The retained
+RTT buffers, but not peak interrupt/runtime stack use. F103 leaves only about
+1.5 KiB flash (before alignment) and 11.4 KiB RAM before runtime stack use; USB
+PMA is separate. Further firmware features need explicit size checks. The retained
 PIO dependency emits a third-party `proc-macro-error2` future-compatibility
 warning; it does not currently fail the build.
 
@@ -84,6 +90,33 @@ timeout, in-flight completion arriving after cleanup, cancelled OUT reception,
 and bus reset/deconfiguration during cancellation. Confirm DATA toggles advance
 exactly once, completed packets are not discarded, and another endpoint's pending
 completion is never cleared. These races require real controller traces.
+
+## Reliability qualification (still outstanding)
+
+- Run sequence-numbered UART at 115200/921600/2 Mbaud, plus 3 Mbaud where
+  supported, in 1 KiB–1 MiB bursts during concurrent flash/GPIO/diagnostic work.
+  Capture exact missing/duplicate bytes, errors, queue and DMA lag high-water,
+  and CPU service latency. Validate the 1 ms DMA poll + 1 ms USB tail budget;
+  a single quiet-line byte should reach the host within 2 ms under normal load.
+- CH32: force delayed TC servicing, cap−1/cap/cap+1/two-cap producer advances,
+  wraps during copy, cancellation while waiting, and flush/baud changes at a
+  wrap or a partial frame. Verify no old bytes reappear after ACK. Check timer
+  monotonicity and DMA/PFIC/debug-freeze behavior; ambiguous intervals must fail
+  rather than appear as an empty ring. Late TC races may fail conservatively.
+- Inject framing/noise/break/overrun and DUT power cycles, including during TX
+  TC status polling. Verify the CH32 error IRQ latches the failure, stops RX,
+  and the task safely rearms. DMA transfer-error panic remains a known unhandled
+  recovery case until opt-in watchdog work is qualified.
+- Pause readers for 10 ms/100 ms/5 s. Queue/USB loss must be visible; diagnostics
+  stay monotonic and explicit flush alone clears reportable RX loss. Check both
+  old firmware (unsupported diagnostics) and optional-page fallback.
+- Unplug/replug/reset during UART, bulk IN/OUT, idle and pulses. Old leases and
+  queued generations must fail; no uncertain write, GPIO state or session is
+  replayed. Swap devices and verify serial/board/version refusal.
+- Before enabling watchdogs, scope DUT reset/power/CS during bridge reset on
+  every board. Exercise panic/spin/reset loops/debugging and long erase/read,
+  idle/no-reader/unplug cases. Host silence is not a reset condition. Reset
+  causes and retained boot/fault evidence are not implemented or qualified.
 
 RP2040-specific risks to verify: the retained direct-register EP2 double-buffer
 fast path/reservation, final-buffer draining, cancellation at a DMA boundary,

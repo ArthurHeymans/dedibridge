@@ -125,6 +125,21 @@ impl dedi_core::aux::UartRx for StmRx {
             embassy_futures::select::Either::Second(byte) => Ok(byte),
         }
     }
+    async fn read(&mut self, buffer: &mut [u8]) -> Result<usize, dedi_core::aux::UartError> {
+        if buffer.is_empty() {
+            return Ok(0);
+        }
+        buffer[0] = self.read_byte().await?;
+        let mut count = 1;
+        while count < buffer.len() {
+            let Ok(byte) = UART_RX.try_receive() else {
+                break;
+            };
+            buffer[count] = byte;
+            count += 1;
+        }
+        Ok(count)
+    }
     fn set_baud(&mut self, baud: u32) -> Result<(), dedi_core::aux::UartError> {
         if baud == 0 {
             return Err(dedi_core::aux::UartError);

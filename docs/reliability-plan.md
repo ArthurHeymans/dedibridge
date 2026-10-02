@@ -41,30 +41,50 @@ returns uptime/package version and UART/USB/flash counters.
 Distinguish UART hardware-error events, queue/ring overflow, and UART bytes
 lost on auxiliary IN delivery. Exact physical frame-loss counts are often
 unavailable. Never record DUT contents or write every error to MCU flash.
-Report unsupported/unavailable fields honestly. In particular, CH32's current
-per-byte RX path has unreported loss between reads; zero counters do not prove
-that its byte stream is complete.
+Report unsupported/unavailable fields honestly. CH32's optional DMA page
+separates hardware-error IRQ events, progress/overrun failures, and observed
+ring lag high-water from USB/software-queue loss. Its RX-gap warning remains set
+until DMA/timer/error-IRQ races are hardware-qualified; zero counters do not
+prove that its byte stream is complete.
 
 Reset causes and retained fault records require board-specific implementation
 and retention validation. Do not invent a reliable boot counter from ordinary
 zero-initialized RAM or claim noinit retention without checking linker/startup
 and boot-ROM behavior.
 
-## Next: continuous CH32 RX and shared batching
+## Continuous CH32 RX and shared batching
 
-Reuse the pinned HAL's public DMA ring where its safety contract is sufficient.
-Investigate the ring's consumer and completion-counter behavior, not only its
-API. Circular DMA runs continuously while consumer futures may be cancelled.
-Use chunked RX into bounded shared queues and bounded USB batching to avoid
-per-byte endpoint cancellation. Poll partial tails on a bounded schedule unless
-an IDLE IRQ can be proven not to steal a byte during flag clearing.
+Implemented in the third follow-up:
 
-Flush must stop/rebase the producer/consumer and clear hardware state before
-ACK; HAL ring `clear()` alone is not a running-DMA barrier. Baud changes occur
-only with TX idle. USART framing/break/overrun errors must be observable and RX
-must recover rather than silently remaining disabled. Missed wraps or ambiguous
-DMA progress fail the stream conservatively. Ring sizing covers service latency,
-not indefinite USB stalls; high-water measurements inform the final capacity.
+- The pinned HAL's public 4 KiB circular RX DMA ring runs independently of
+  consumer futures. Reads copy up to 61 available bytes; cancelling a wait does
+  not stop DMA. A 1 ms timer polls short tails, avoiding IDLE/DR clearing races.
+- Conservative producer-position accounting wraps the HAL copy: observations
+  must occur before half a ring could arrive at 8N1 baud, unread lag must remain
+  below half capacity, and the post-copy check must pass before committing.
+  Delayed/collapsed TC accounting, a stopped receiver, or ambiguous copy progress
+  fails the stream and restarts RX rather than delivering an uncertain copy.
+  At 3 Mbaud the observation limit is about 6.8 ms. This is deliberately stricter
+  than physical capacity; late TC IRQs may produce conservative false failures.
+- A board-owned USART2 error IRQ latches a fault and disables RX requests. The
+  task stops reception/DMA, clears SR/DR only while stopped, rebases both the
+  physical producer and HAL consumer, and rearms. This is also the explicit
+  flush barrier; HAL `clear()` alone would replay old bytes. Baud changes update
+  BRR only after physical TX completion and rebase RX too.
+- The shared RX queue is a 1 KiB byte pipe, with bounded chunk insertion/draining
+  and explicit partial/full-queue loss. It replaces per-byte USB select/cancel
+  work with available-byte batches; a short USB tail still has a 1 ms deadline.
+  F103 drains its existing IRQ queue in chunks; Pico's engine is unchanged.
+- An optional diagnostic page advertises CH32 hardware-error events, progress
+  failures, and observed ring lag high-water. The original three page layouts
+  stay unchanged; hosts retain base diagnostics when the optional page is absent.
+  Reportable loss counters now saturate too, including failed-report restoration.
+
+The ring covers executor latency, not 100 ms auxiliary IN stalls or indefinite
+host pauses. The RX task continues draining while USB awaits completion; a full
+shared pipe drops visibly. Debug halts, DMA register/TC timing, error-IRQ latching
+(including TX status reads), and timer continuity still require real qualification.
+The HAL's DMA transfer-error IRQ still panics; watchdog recovery is not enabled.
 
 Keep F103 IRQ RX and Pico's existing engine unless qualification shows a need
 for a different implementation. Advertised max baud is a configuration limit,

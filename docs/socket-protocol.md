@@ -20,7 +20,7 @@ and routes UART events while waiting for its response.
 | `0x02` GPIO_SET_DIRECTION | mask, directions |
 | `0x03` GPIO_SET_OUTPUT | mask, values |
 | `0x04` GPIO_PULSE_LOW | mask, duration_ms:LE16 |
-| `0x05` GET_DIAG | page:u8 (0 health, 1 UART, 2 activity) |
+| `0x05` GET_DIAG | page:u8 (0 health, 1 UART, 2 activity; optional 3 RX DMA) |
 | `0x10` UART_SET_BAUD | baud:LE32 |
 | `0x11` UART_WRITE | binary bytes |
 | `0x12` UART_FLUSH_RX | empty |
@@ -61,7 +61,8 @@ transport-selection switch.
 1. A missing capability or an INVALID reply means diagnostics are unsupported,
 not that counters are zero. Each successful reply carries command/status plus
 one fixed zerocopy layout from `crates/protocol/src/diagnostics.rs`. Page layout
-version is independently 1; pages currently contain 32/36/52 bytes. Unknown
+version is independently 1; mandatory pages contain 32/36/52 bytes. The
+optional 16-byte RX DMA page is advertised by health flag bit 3. Unknown
 pages, wrong request lengths, and other unsupported commands return INVALID.
 
 All page counters are saturating little-endian u32 values, monotonic since boot,
@@ -71,9 +72,10 @@ never resets them. RX-flush clears reportable loss, not lifetime counters.
 - Health: layout version/page, board, flags, uptime seconds (saturating), package
   firmware version (16 ASCII bytes, zero-padded), reset cause and boot count.
   Flags: bit 0 = unobserved RX gaps possible; bit 1 = reset cause known; bit 2 =
-  boot count known. Reset cause and boot count are currently **unknown on all
-  boards**, with their known bits clear. Ordinary RAM counters are not retained.
-  CH32 sets bit 0 until continuous RX replaces per-byte DMA. Firmware version is
+  boot count known; bit 3 = optional RX DMA page available. Reset cause and boot
+  count are currently **unknown on all boards**, with their known bits clear.
+  Ordinary RAM counters are not retained. CH32 keeps bit 0 set pending hardware
+  qualification of continuous DMA, timer continuity, and error-IRQ races. Firmware version is
   a package version, not a unique build hash or a hardware qualification claim.
 - UART: bytes returned by RX driver, TX bytes accepted into its queue, RX/TX
   driver-error events, RX software-queue dropped bytes, auxiliary UART delivery
@@ -88,9 +90,18 @@ never resets them. RX-flush clears reportable loss, not lifetime counters.
   engine is not a flash-engine error. Auxiliary OUT errors include disabled
   endpoints while USB is absent, not only malformed traffic.
 
-Counter zero is not evidence that a stream is complete. In particular, current
-CH32 per-byte DMA discards some between-read bytes without a counter increment.
-Diagnostic queries add USB traffic; qualify sustained UART under that load too.
+- Optional RX DMA: hardware-error IRQ events, progress/overrun/stopped-receiver
+  failures, and observed unread DMA-ring lag high-water (bytes). These failures
+  also contribute to UART driver-error events; do not sum the categories to
+  estimate lost frames. High-water is based on known observations, not actual
+  producer progress during an ambiguous interval. CH32 exposes this page; other
+  boards and older diagnostic firmware return INVALID. A host queries it only
+  when advertised, retaining base diagnostics on an unsupported optional page.
+
+Counter zero is not evidence that a stream is complete. CH32's old per-byte DMA
+loss window has been replaced, but controller/error-IRQ/timer behavior remains
+unqualified. Diagnostic queries add USB traffic; qualify sustained UART under
+that load too.
 
 ## Local daemon API v1
 
@@ -126,7 +137,8 @@ Responses:
 Diagnostics returns `{"type":"diagnostics","serial":"...","diagnostics":{...}}`.
 The snapshot contains layout version, board, firmware version, uptime,
 `rx_gaps_unobserved`, optional reset cause/boot count, and named `uart`/`activity`
-counter maps. Unknown reset/boot values are JSON null. `diagnostics:null` means
+counter maps. `rx_dma` is an optional counter map (null when unavailable).
+Unknown reset/boot values are JSON null. `diagnostics:null` means
 unsupported firmware. Old daemons reject the new operation, as with any unknown
 op; the socket VERSION remains 1.
 

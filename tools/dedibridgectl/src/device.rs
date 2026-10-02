@@ -353,6 +353,25 @@ pub fn diagnostics(
             .map(|(name, count)| ((*name).into(), *count))
             .collect()
     };
+    let rx_dma = if health.flags & DMA_RX_COUNTERS != 0 {
+        match device.request(CMD_GET_DIAG, &[DMA_RX_PAGE], events) {
+            Ok(data) => {
+                let dma = DmaRx::read_from_bytes(&data).map_err(|_| invalid())?;
+                if (dma.version, dma.page) != (VERSION, DMA_RX_PAGE) {
+                    return Err(invalid());
+                }
+                Some(counters(&[
+                    ("hardware_errors", dma.hardware_errors.get()),
+                    ("progress_errors", dma.progress_errors.get()),
+                    ("ring_high_water", dma.ring_high_water.get()),
+                ]))
+            }
+            Err(error) if error.kind() == io::ErrorKind::Unsupported => None,
+            Err(error) => return Err(error),
+        }
+    } else {
+        None
+    };
     Ok(Some(crate::wire::Diagnostics {
         version: VERSION,
         board: health.board,
@@ -361,6 +380,7 @@ pub fn diagnostics(
         rx_gaps_unobserved: health.flags & RX_GAPS_UNOBSERVED != 0,
         reset_cause: (health.flags & RESET_CAUSE_KNOWN != 0).then_some(health.reset_cause.get()),
         boot_count: (health.flags & BOOT_COUNT_KNOWN != 0).then_some(health.boot_count.get()),
+        rx_dma,
         uart: counters(&[
             ("rx_bytes_read", uart.rx_bytes_read.get()),
             ("tx_bytes_accepted", uart.tx_bytes_accepted.get()),
@@ -545,6 +565,37 @@ mod tests {
         assert_eq!(snapshot.reset_cause, Some(16));
         assert_eq!(snapshot.boot_count, None);
         assert_eq!(snapshot.uart["rx_bytes_read"], u32::MAX);
+        assert!(
+            snapshot.rx_dma.is_none(),
+            "base-page firmware must not be queried for an optional page"
+        );
+        health.flags |= dedi_protocol::diagnostics::DMA_RX_COUNTERS;
+        let mut dma = dedi_protocol::diagnostics::DmaRx::new_zeroed();
+        dma.version = DIAG_VERSION;
+        dma.page = dedi_protocol::diagnostics::DMA_RX_PAGE;
+        dma.progress_errors.set(7);
+        for supported in [true, false] {
+            let mut extended: VecDeque<_> = pages.iter().cloned().map(Ok).collect();
+            extended[0] = Ok(health.as_bytes().to_vec());
+            extended.push_back(if supported {
+                Ok(dma.as_bytes().to_vec())
+            } else {
+                Err(io::ErrorKind::Unsupported.into())
+            });
+            let mut device = Diag {
+                calls: 0,
+                pages: extended,
+            };
+            let snapshot = diagnostics(&mut device, &info, &mut |_| {})
+                .unwrap()
+                .unwrap();
+            assert_eq!(device.calls, 4);
+            assert_eq!(
+                snapshot.rx_dma.map(|c| c["progress_errors"]),
+                supported.then_some(7)
+            );
+            assert_eq!(snapshot.uart["rx_bytes_read"], u32::MAX);
+        }
         for index in 0..3 {
             let mut pages = pages.clone();
             pages[index][0] = 255;

@@ -8,7 +8,7 @@ use ch32_hal::{
     peripherals::*,
     spi::{self, Spi},
     time::Hertz,
-    usart::{self, Uart},
+    usart::{self, UartTx},
     usb::EndpointDataBuffer512,
     usbhs::{Driver, InterruptHandler, WakeupInterruptHandler},
 };
@@ -30,7 +30,7 @@ use static_cell::StaticCell;
 bind_interrupts!(struct Irqs {
     USBHS => CancelledTransferHandler, InterruptHandler<USBHS>;
     USBHS_WKUP => WakeupInterruptHandler<USBHS>;
-    USART2 => usart::InterruptHandler<USART2>;
+    USART2 => RxInterrupt;
 });
 const EP_BUFFERS: usize = 5;
 type UsbDriver = Driver<'static, USBHS, EP_BUFFERS, 512>;
@@ -69,17 +69,15 @@ async fn main(spawner: Spawner) -> ! {
     let shared = SHARED.init(Shared::new(flash, leds));
     static IDENTITY: StaticCell<DeviceIdentity> = StaticCell::new();
     let identity = IDENTITY.init(DeviceIdentity::from_mcu_id(&hal::signature::unique_id()));
-    let uart = Uart::new(
-        p.USART2,
-        p.PA3,
-        p.PA2,
-        Irqs,
-        p.DMA1_CH7,
+    let tx = UartTx::new(p.USART2, p.PA2, p.DMA1_CH7, usart::Config::default()).unwrap();
+    static RX_RING: StaticCell<[u8; RX_RING_SIZE]> = StaticCell::new();
+    let rx = ChRx::new(
+        Input::new(p.PA3, Pull::None),
         p.DMA1_CH6,
-        usart::Config::default(),
+        RX_RING.init([0; RX_RING_SIZE]),
+        115200,
     )
     .unwrap();
-    let (tx, rx) = uart.split();
     let gpio = BoardGpio::new(
         OutputOpenDrain::new(p.PB8, Level::High, Speed::Low),
         OutputOpenDrain::new(p.PB9, Level::High, Speed::Low),
@@ -114,7 +112,7 @@ async fn main(spawner: Spawner) -> ! {
     spawner.spawn(usb_task(builder.build()).unwrap());
     spawner.spawn(bulk_task(shared, endpoints.flash_in, endpoints.flash_out).unwrap());
     spawner.spawn(aux_task(endpoints.aux_out, endpoints.aux_in).unwrap());
-    spawner.spawn(rx_task(ChRx(rx)).unwrap());
+    spawner.spawn(rx_task(rx).unwrap());
     spawner.spawn(tx_task(ChTx(tx)).unwrap());
     spawner.spawn(gpio_task(gpio).unwrap());
     loop {

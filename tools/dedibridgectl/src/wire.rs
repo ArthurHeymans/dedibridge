@@ -37,6 +37,7 @@ pub struct Diagnostics {
     pub rx_gaps_unobserved: bool,
     pub reset_cause: Option<u32>,
     pub boot_count: Option<u32>,
+    pub rx_dma: Option<std::collections::BTreeMap<String, u32>>,
     pub uart: std::collections::BTreeMap<String, u32>,
     pub activity: std::collections::BTreeMap<String, u32>,
 }

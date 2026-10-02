@@ -10,6 +10,7 @@ pub mod diagnostics;
 pub mod flash;
 pub mod gpio;
 pub mod handler;
+pub mod rx_ring;
 pub mod transport;
 pub mod usb;
 pub use dedi_protocol::sf600 as protocol;

@@ -173,12 +173,18 @@ firmware TX queue, not delivered to or acknowledged by the DUT. Already accepted
 UART bytes are not cancelled by closing a client. GPIO pulses run in a separate
 firmware task and still release if USB stalls or disconnects.
 
-CH32 UART currently retains byte-at-a-time RX DMA from the original firmware.
-The pinned HAL can discard a byte arriving between reads without reporting
-loss; CH32 loss counters are therefore not yet trustworthy as a completeness
-check. Continuous buffered RX is a planned correctness fix, not merely a
-throughput optimization. Maximum advertised baud is a configuration limit,
-not a qualified sustained-throughput rating on any board. Pico flush restarts its RX state machine and discards any partial frame.
+CH32 UART uses a continuously running 4 KiB RX DMA ring, bounded chunk reads,
+and a 1 ms tail poll. Cancelling a consumer wait does not stop reception. Shared
+UART/USB buffering is a bounded 1 KiB byte pipe; F103 drains its existing IRQ
+queue in chunks and Pico retains its engine. Ambiguous DMA progress fails the
+serial stream conservatively rather than publishing uncertain bytes. Flush
+stops/rebases DMA and clears hardware state before ACK. Optional CH32 diagnostics
+separate hardware-error events, progress failures, and observed DMA lag.
+
+CH32's RX-gap warning remains set pending real DMA/timer/error-IRQ qualification;
+zero counters do not prove a complete stream. Maximum advertised baud is a
+configuration limit, not a qualified sustained-throughput rating on any board.
+Pico flush restarts its RX state machine and discards any partial frame.
 F103's 36 MHz UART clock permits 550–2,250,000 baud with its 16-bit divider;
 requests below 550 are rejected even though the shared protocol's preliminary
 range check starts at 300.

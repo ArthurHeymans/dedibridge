@@ -148,6 +148,29 @@ impl Default for ActivityCounters {
 }
 pub static ACTIVITY: ActivityCounters = ActivityCounters::new();
 
+pub struct DmaCounters {
+    pub hardware_errors: Counter,
+    pub progress_errors: Counter,
+    pub ring_high_water: Counter,
+}
+pub static RX_DMA: DmaCounters = DmaCounters {
+    hardware_errors: Counter::new(),
+    progress_errors: Counter::new(),
+    ring_high_water: Counter::new(),
+};
+impl DmaCounters {
+    pub fn snapshot(&self) -> wire::DmaRx {
+        wire::DmaRx {
+            version: wire::VERSION,
+            page: wire::DMA_RX_PAGE,
+            reserved: [0; 2],
+            hardware_errors: self.hardware_errors.wire(),
+            progress_errors: self.progress_errors.wire(),
+            ring_high_water: self.ring_high_water.wire(),
+        }
+    }
+}
+
 pub fn health(board: u8) -> Health {
     let mut firmware_version = [0; 16];
     let version = env!("CARGO_PKG_VERSION").as_bytes();
@@ -157,10 +180,10 @@ pub fn health(board: u8) -> Health {
         version: wire::VERSION,
         page: wire::HEALTH_PAGE,
         board,
-        // Per-byte CH32 DMA still has unobservable gaps. Do not claim zero
+        // CH32 DMA/timer/error-IRQ races remain unqualified. Do not claim zero
         // counters prove completeness. No board has qualified boot retention.
         flags: if board == 2 {
-            wire::RX_GAPS_UNOBSERVED
+            wire::RX_GAPS_UNOBSERVED | wire::DMA_RX_COUNTERS
         } else {
             0
         },
