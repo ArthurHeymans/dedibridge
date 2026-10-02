@@ -1,4 +1,6 @@
-use crate::{bulk::Shared, flash::Flash, gpio::LedControl, transport::Recovery};
+use crate::{
+    bulk::Shared, diagnostics::ACTIVITY, flash::Flash, gpio::LedControl, transport::Recovery,
+};
 use dedi_protocol::{identity::DeviceIdentity, sf600::*};
 use embassy_usb::{
     Handler,
@@ -91,9 +93,9 @@ impl<F: Flash, L: LedControl, R: Recovery> Handler for DediprogHandler<'_, F, L,
                     false
                 } else {
                     let len = if req.value & 1 != 0 { 16 } else { 0 };
-                    let result = self
-                        .shared
-                        .control(|flash| flash.transceive(data, &mut self.response[..len]));
+                    let result = self.shared.control(|flash| {
+                        ACTIVITY.flash_result(flash.transceive(data, &mut self.response[..len]))
+                    });
                     if matches!(result, Some(Ok(()))) {
                         self.response_len = len;
                         true
@@ -107,9 +109,9 @@ impl<F: Flash, L: LedControl, R: Recovery> Handler for DediprogHandler<'_, F, L,
                 true
             }
             CMD_SET_SPI_CLK => matches!(
-                self.shared.control(
-                    |flash| flash.set_frequency(SpiSpeed::from_code(req.value).frequency_hz())
-                ),
+                self.shared.control(|flash| ACTIVITY.flash_result(
+                    flash.set_frequency(SpiSpeed::from_code(req.value).frequency_hz())
+                )),
                 Some(Ok(()))
             ),
             CMD_SET_CS => self

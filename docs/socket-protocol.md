@@ -20,6 +20,7 @@ and routes UART events while waiting for its response.
 | `0x02` GPIO_SET_DIRECTION | mask, directions |
 | `0x03` GPIO_SET_OUTPUT | mask, values |
 | `0x04` GPIO_PULSE_LOW | mask, duration_ms:LE16 |
+| `0x05` GET_DIAG | page:u8 (0 health, 1 UART, 2 activity) |
 | `0x10` UART_SET_BAUD | baud:LE32 |
 | `0x11` UART_WRITE | binary bytes |
 | `0x12` UART_FLUSH_RX | empty |
@@ -54,6 +55,43 @@ compatibility; new clients use the distinct input/output masks in GET_INFO.
 Identity is the USB serial string; board number is informational, never a host
 transport-selection switch.
 
+### Read-only diagnostics
+
+`DeviceInfo.flags` bit 2 (`CAP_DIAG`) advertises GET_DIAG. Auxiliary VERSION stays
+1. A missing capability or an INVALID reply means diagnostics are unsupported,
+not that counters are zero. Each successful reply carries command/status plus
+one fixed zerocopy layout from `crates/protocol/src/diagnostics.rs`. Page layout
+version is independently 1; pages currently contain 32/36/52 bytes. Unknown
+pages, wrong request lengths, and other unsupported commands return INVALID.
+
+All page counters are saturating little-endian u32 values, monotonic since boot,
+and read individually: the pages are **not** a transactional snapshot. Querying
+never resets them. RX-flush clears reportable loss, not lifetime counters.
+
+- Health: layout version/page, board, flags, uptime seconds (saturating), package
+  firmware version (16 ASCII bytes, zero-padded), reset cause and boot count.
+  Flags: bit 0 = unobserved RX gaps possible; bit 1 = reset cause known; bit 2 =
+  boot count known. Reset cause and boot count are currently **unknown on all
+  boards**, with their known bits clear. Ordinary RAM counters are not retained.
+  CH32 sets bit 0 until continuous RX replaces per-byte DMA. Firmware version is
+  a package version, not a unique build hash or a hardware qualification claim.
+- UART: bytes returned by RX driver, TX bytes accepted into its queue, RX/TX
+  driver-error events, RX software-queue dropped bytes, auxiliary UART delivery
+  dropped bytes/failures, and RX software-queue high-water in bytes. Errors are
+  events, not exact physical frame-loss counts. USB delivery loss is separate
+  from UART-driver errors. High-water does not measure a peripheral DMA ring.
+- Activity: bulk USB deadline expirations, cancellation calls, flash errors by
+  `flash::Error` variant, completed/failed bulk operations, auxiliary IN packet
+  failures, auxiliary OUT read errors, and late CH32 completion retirements in
+  the IRQ hook. Cancellations include USB lifecycle resets; failed bulk includes
+  cancelled operations. Parser/capability rejection before calling a flash
+  engine is not a flash-engine error. Auxiliary OUT errors include disabled
+  endpoints while USB is absent, not only malformed traffic.
+
+Counter zero is not evidence that a stream is complete. In particular, current
+CH32 per-byte DMA discards some between-read bytes without a counter increment.
+Diagnostic queries add USB traffic; qualify sustained UART under that load too.
+
 ## Local daemon API v1
 
 Unix stream socket, permissions `0600`. Use a private per-user directory and
@@ -69,6 +107,7 @@ Send one of these, read one response, close:
 
 ```json
 {"op":"info"}
+{"op":"diagnostics"}
 {"op":"state"}
 {"op":"pulse","mask":1,"ms":100}
 {"op":"direction","mask":1,"values":0}
@@ -83,6 +122,13 @@ Responses:
 {"type":"state","inputs":15,"outputs":3,"directions":0,"caps":7}
 {"type":"error","message":"..."}
 ```
+
+Diagnostics returns `{"type":"diagnostics","serial":"...","diagnostics":{...}}`.
+The snapshot contains layout version, board, firmware version, uptime,
+`rx_gaps_unobserved`, optional reset cause/boot count, and named `uart`/`activity`
+counter maps. Unknown reset/boot values are JSON null. `diagnostics:null` means
+unsupported firmware. Old daemons reject the new operation, as with any unknown
+op; the socket VERSION remains 1.
 
 Output alone does not change direction. `set` enables the masked outputs, then
 sets their values, as one serialized daemon actor operation (two acknowledged

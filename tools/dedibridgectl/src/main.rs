@@ -23,6 +23,8 @@ enum Command {
         serial: Option<String>,
     },
     Info,
+    #[command(alias = "diag")]
+    Diagnostics,
     State,
     Reset {
         #[arg(default_value_t = 100)]
@@ -102,6 +104,7 @@ impl Command {
     fn control_request(self) -> Option<Request> {
         Some(match self {
             Command::Info => Request::Info,
+            Command::Diagnostics => Request::Diagnostics,
             Command::State => Request::State,
             Command::Reset { ms } => Request::Pulse { mask: 1, ms },
             Command::Power { ms } | Command::Poweroff { ms } => Request::Pulse { mask: 2, ms },
@@ -228,6 +231,8 @@ mod tests {
             (vec!["power"], r#"{"op":"pulse","mask":2,"ms":500}"#),
             (vec!["poweroff"], r#"{"op":"pulse","mask":2,"ms":5000}"#),
             (vec!["state"], r#"{"op":"state"}"#),
+            (vec!["diagnostics"], r#"{"op":"diagnostics"}"#),
+            (vec!["diag"], r#"{"op":"diagnostics"}"#),
         ] {
             let cli = Cli::try_parse_from(std::iter::once("dedibridgectl").chain(args)).unwrap();
             let actual = serde_json::to_value(cli.command.control_request().unwrap()).unwrap();

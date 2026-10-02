@@ -27,14 +27,16 @@ Mock/software acceptance is separate from unplug/replug qualification. A
 reopen is not proof of an MCU reset, nor proof that the last command did not
 execute. See the [socket contract](socket-protocol.md).
 
-## Next: read-only diagnostics
+## Read-only diagnostic foundation
 
-Keep auxiliary and socket versions at 1. Add a capability bit and a new query
-opcode; old firmware/hosts remain compatible. Use small, independently
-versioned diagnostic pages within the existing 59-byte response-data budget,
-with zerocopy little-endian layouts. Counter snapshots across pages need not be
-atomic. Counters saturate rather than wrap, and are monotonic since boot;
-RX-flush clears reportable loss, not lifetime diagnostics.
+Implemented in the second follow-up: auxiliary and socket versions remain 1.
+A capability bit and a new query opcode expose three independently versioned
+pages within the existing 59-byte response-data budget, using zerocopy
+little-endian layouts. Old firmware reports unsupported; old hosts can ignore
+the new capability. Counter snapshots across pages are not atomic. Counters
+saturate rather than wrap and are monotonic since boot; RX-flush clears
+reportable loss, not lifetime diagnostics. The host `diagnostics`/`diag` query
+returns uptime/package version and UART/USB/flash counters.
 
 Distinguish UART hardware-error events, queue/ring overflow, and UART bytes
 lost on auxiliary IN delivery. Exact physical frame-loss counts are often

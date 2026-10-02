@@ -6,6 +6,7 @@ extern crate std;
 
 pub mod aux;
 pub mod bulk;
+pub mod diagnostics;
 pub mod flash;
 pub mod gpio;
 pub mod handler;

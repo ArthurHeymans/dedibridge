@@ -1,5 +1,6 @@
 use crate::{
     config::{BULK_BLOCK_SIZE, PAGE_SIZE},
+    diagnostics::ACTIVITY,
     flash::{Error, Flash},
     gpio::LedControl,
     protocol::BulkOperation,
@@ -127,6 +128,7 @@ impl<F: Flash, L: LedControl, R: Recovery> Shared<F, L, R> {
         accepted
     }
     pub fn cancel(&self) {
+        ACTIVITY.cancellations.increment();
         let old = self.generation.fetch_add(1, Ordering::SeqCst);
         critical_section::with(|cs| self.queue.borrow(cs).borrow_mut().discard(old, false));
         // Release a manually selected bus too, but never touch an active DMA owner.
@@ -148,6 +150,10 @@ impl<F: Flash, L: LedControl, R: Recovery> Shared<F, L, R> {
         .await
         {
             Ok(Either::First(result)) if !self.cancelled(generation) => Ok(result),
+            Err(_) => {
+                ACTIVITY.bulk_usb_timeouts.increment();
+                Err(())
+            }
             _ => Err(()),
         }
     }
@@ -193,17 +199,19 @@ impl<F: Flash, L: LedControl, R: Recovery> Shared<F, L, R> {
                     } => {
                         let enabled = self.usb(generation, input.wait_enabled()).await;
                         let started = if enabled.is_ok() {
-                            flash
-                                .start_read(
-                                    opcode,
-                                    address,
-                                    addr_len,
-                                    io_mode,
-                                    mode_byte,
-                                    dummy_cycles,
-                                    || self.cancelled(generation),
-                                )
-                                .await
+                            ACTIVITY.flash_result(
+                                flash
+                                    .start_read(
+                                        opcode,
+                                        address,
+                                        addr_len,
+                                        io_mode,
+                                        mode_byte,
+                                        dummy_cycles,
+                                        || self.cancelled(generation),
+                                    )
+                                    .await,
+                            )
                         } else {
                             Err(Error::Cancelled)
                         };
@@ -223,7 +231,12 @@ impl<F: Flash, L: LedControl, R: Recovery> Shared<F, L, R> {
                                     }
                                     let slot = sender.send().await;
                                     slot.end = false;
-                                    if flash.read_block(&mut slot.bytes, io_mode).await.is_err() {
+                                    if ACTIVITY
+                                        .flash_result(
+                                            flash.read_block(&mut slot.bytes, io_mode).await,
+                                        )
+                                        .is_err()
+                                    {
                                         failed.store(true, Ordering::Relaxed);
                                     }
                                     sender.send_done();
@@ -311,7 +324,7 @@ impl<F: Flash, L: LedControl, R: Recovery> Shared<F, L, R> {
                                                 || self.cancelled(generation),
                                             )
                                             .await;
-                                        if let Err(error) = result {
+                                        if let Err(error) = ACTIVITY.flash_result(result) {
                                             keep_verify = error != Error::Cancelled;
                                             failed.store(true, Ordering::Relaxed);
                                         }
@@ -330,8 +343,11 @@ impl<F: Flash, L: LedControl, R: Recovery> Shared<F, L, R> {
                 flash.end_transfer();
                 critical_section::with(|cs| *self.flash.borrow(cs).borrow_mut() = Some(flash));
                 if failed.load(Ordering::Relaxed) {
+                    ACTIVITY.bulk_failed.increment();
                     R::prepare(is_read, true);
                     self.set_error();
+                } else {
+                    ACTIVITY.bulk_completed.increment();
                 }
                 critical_section::with(|cs| {
                     let mut q = self.queue.borrow(cs).borrow_mut();

@@ -138,6 +138,7 @@ Run the daemon and dutagent as the same account for the owner-only socket.
 ./dev host list
 ./dev host --socket /run/user/1000/board-a.sock daemon --serial YOUR_USB_SERIAL
 # Separate terminals, while flashprog owns interface 0:
+./dev host --socket /run/user/1000/board-a.sock diagnostics
 ./dev host --socket /run/user/1000/board-a.sock state
 ./dev host --socket /run/user/1000/board-a.sock reset
 ./dev host --socket /run/user/1000/board-a.sock poweroff
@@ -162,7 +163,11 @@ the hardware baud; select it with `--baud` when attaching.
 
 The versioned socket API supports binary UART data, acknowledged writes, an
 RX-flush barrier, and explicit errors for overflow/disconnect. Firmware queues
-are bounded. Busy USB writes are retried within a deadline rather than dropped;
+are bounded. `diagnostics` (alias `diag`) exposes read-only lifetime UART, USB,
+and flash counters plus uptime/package version without changing protocol
+versions. Unsupported firmware and unknown reset/boot values are explicit;
+queries and RX-flush never reset lifetime counters. See the
+[diagnostic layouts and limitations](docs/socket-protocol.md#read-only-diagnostics). Busy USB writes are retried within a deadline rather than dropped;
 an overloaded console fails visibly. A write ACK means accepted into the
 firmware TX queue, not delivered to or acknowledged by the DUT. Already accepted
 UART bytes are not cancelled by closing a client. GPIO pulses run in a separate

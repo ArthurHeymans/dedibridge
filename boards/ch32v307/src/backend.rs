@@ -171,12 +171,16 @@ impl ch32_hal::interrupt::typelevel::Handler<ch32_hal::interrupt::typelevel::USB
         };
         let endpoint =
             embassy_usb::driver::EndpointAddress::from_parts(status.endp() as usize, direction);
-        if CANCELLED_PACKETS.load(portable_atomic::Ordering::SeqCst) & packet_bit(endpoint) != 0 {
-            retire_packet(endpoint);
+        if CANCELLED_PACKETS.load(portable_atomic::Ordering::SeqCst) & packet_bit(endpoint) != 0
+            && retire_packet(endpoint)
+        {
+            dedi_core::diagnostics::ACTIVITY
+                .late_usb_retirements
+                .increment();
         }
     }
 }
-fn retire_packet(endpoint: embassy_usb::driver::EndpointAddress) {
+fn retire_packet(endpoint: embassy_usb::driver::EndpointAddress) -> bool {
     use ch32_hal::pac::usbhs::vals::{EpRxResponse, EpTog, EpTxResponse, UsbToken};
     // Caller holds a critical section or runs in the USB IRQ.
     let r = ch32_hal::pac::USBHS;
@@ -199,7 +203,7 @@ fn retire_packet(endpoint: embassy_usb::driver::EndpointAddress) {
                 UsbToken::OUT
             }
     {
-        return;
+        return false;
     }
     if endpoint.is_in() || st.tog_ok() {
         if endpoint.is_out()
@@ -242,6 +246,7 @@ fn retire_packet(endpoint: embassy_usb::driver::EndpointAddress) {
     }
     d.int_fg().write(|v| v.set_transfer(true));
     d.int_en().modify(|v| v.set_transfer(true));
+    true
 }
 impl Recovery for ChRecovery {
     type Guard = PacketGuard;

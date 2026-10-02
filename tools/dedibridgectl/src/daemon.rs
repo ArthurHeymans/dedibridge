@@ -1,5 +1,5 @@
 use crate::{
-    device::{DeviceIo, Packet, parse_info},
+    device::{DeviceIo, Packet, diagnostics, parse_info},
     wire::{self, Info, Request, Response},
 };
 use dedi_protocol::aux::*;
@@ -198,6 +198,14 @@ fn execute(
                     return Ok(Response::Info {
                         serial: serial.into(),
                         info: info.clone(),
+                    });
+                }
+                Request::Diagnostics => {
+                    return Ok(Response::Diagnostics {
+                        serial: serial.into(),
+                        diagnostics: diagnostics(device, info, &mut |packet| {
+                            event(session, packet)
+                        })?,
                     });
                 }
                 Request::State => (CMD_GPIO_GET_STATE, vec![]),

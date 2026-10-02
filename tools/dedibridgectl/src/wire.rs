@@ -8,6 +8,7 @@ pub const MAX_LINE: usize = 16384;
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Request {
     Info,
+    Diagnostics,
     State,
     Pulse { mask: u8, ms: u16 },
     Direction { mask: u8, values: u8 },
@@ -28,6 +29,18 @@ pub struct Info {
     pub max_baud: u32,
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct Diagnostics {
+    pub version: u8,
+    pub board: u8,
+    pub uptime_secs: u32,
+    pub firmware_version: String,
+    pub rx_gaps_unobserved: bool,
+    pub reset_cause: Option<u32>,
+    pub boot_count: Option<u32>,
+    pub uart: std::collections::BTreeMap<String, u32>,
+    pub activity: std::collections::BTreeMap<String, u32>,
+}
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Response {
     Ready {
@@ -38,6 +51,11 @@ pub enum Response {
     Info {
         serial: String,
         info: Info,
+    },
+    Diagnostics {
+        serial: String,
+        /// None means unsupported by this firmware, not zero counters.
+        diagnostics: Option<Diagnostics>,
     },
     State {
         inputs: u8,

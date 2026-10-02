@@ -271,10 +271,16 @@ fn request_loop(
                 }
                 std::thread::sleep(Duration::from_millis(1));
             }
-            status => {
+            STATUS_INVALID => {
                 return Err(io::Error::new(
                     io::ErrorKind::Unsupported,
-                    format!("command {kind:#x} rejected: status {status}"),
+                    format!("command {kind:#x} rejected: status {STATUS_INVALID}"),
+                ));
+            }
+            status => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("unknown auxiliary status {status}"),
                 ));
             }
         }
@@ -298,6 +304,94 @@ pub fn parse_info(data: &[u8]) -> io::Result<Info> {
         flags: info.flags,
         max_baud: info.max_baud.get(),
     })
+}
+
+pub fn diagnostics(
+    device: &mut impl DeviceIo,
+    info: &Info,
+    events: &mut dyn FnMut(Packet),
+) -> io::Result<Option<crate::wire::Diagnostics>> {
+    use dedi_protocol::diagnostics::*;
+    if info.flags & CAP_DIAG == 0 {
+        return Ok(None);
+    }
+    let mut pages = Vec::new();
+    for page in 0..PAGE_COUNT {
+        match device.request(CMD_GET_DIAG, &[page], events) {
+            Ok(data) => pages.push(data),
+            Err(error) if error.kind() == io::ErrorKind::Unsupported => return Ok(None),
+            Err(error) => return Err(error),
+        }
+    }
+    let invalid = || io::Error::new(io::ErrorKind::InvalidData, "invalid diagnostic page");
+    let health = Health::read_from_bytes(&pages[0]).map_err(|_| invalid())?;
+    let uart = Uart::read_from_bytes(&pages[1]).map_err(|_| invalid())?;
+    let activity = Activity::read_from_bytes(&pages[2]).map_err(|_| invalid())?;
+    if [
+        (health.version, health.page),
+        (uart.version, uart.page),
+        (activity.version, activity.page),
+    ] != [
+        (VERSION, HEALTH_PAGE),
+        (VERSION, UART_PAGE),
+        (VERSION, ACTIVITY_PAGE),
+    ] || health.board != info.board
+    {
+        return Err(invalid());
+    }
+    let version_end = health
+        .firmware_version
+        .iter()
+        .position(|b| *b == 0)
+        .unwrap_or(16);
+    let firmware_version = std::str::from_utf8(&health.firmware_version[..version_end])
+        .map_err(|_| invalid())?
+        .into();
+    let counters = |values: &[(&str, u32)]| {
+        values
+            .iter()
+            .map(|(name, count)| ((*name).into(), *count))
+            .collect()
+    };
+    Ok(Some(crate::wire::Diagnostics {
+        version: VERSION,
+        board: health.board,
+        uptime_secs: health.uptime_secs.get(),
+        firmware_version,
+        rx_gaps_unobserved: health.flags & RX_GAPS_UNOBSERVED != 0,
+        reset_cause: (health.flags & RESET_CAUSE_KNOWN != 0).then_some(health.reset_cause.get()),
+        boot_count: (health.flags & BOOT_COUNT_KNOWN != 0).then_some(health.boot_count.get()),
+        uart: counters(&[
+            ("rx_bytes_read", uart.rx_bytes_read.get()),
+            ("tx_bytes_accepted", uart.tx_bytes_accepted.get()),
+            ("rx_driver_errors", uart.rx_driver_errors.get()),
+            ("tx_driver_errors", uart.tx_driver_errors.get()),
+            ("rx_queue_dropped_bytes", uart.rx_queue_dropped_bytes.get()),
+            (
+                "rx_delivery_dropped_bytes",
+                uart.rx_delivery_dropped_bytes.get(),
+            ),
+            ("rx_delivery_failures", uart.rx_delivery_failures.get()),
+            ("rx_queue_high_water", uart.rx_queue_high_water.get()),
+        ]),
+        activity: counters(&[
+            ("bulk_usb_timeouts", activity.bulk_usb_timeouts.get()),
+            ("cancellations", activity.cancellations.get()),
+            (
+                "flash_hardware_errors",
+                activity.flash_hardware_errors.get(),
+            ),
+            ("flash_busy_errors", activity.flash_busy_errors.get()),
+            ("flash_busy_timeouts", activity.flash_busy_timeouts.get()),
+            ("flash_cancelled", activity.flash_cancelled.get()),
+            ("flash_unsupported", activity.flash_unsupported.get()),
+            ("bulk_completed", activity.bulk_completed.get()),
+            ("bulk_failed", activity.bulk_failed.get()),
+            ("aux_in_failures", activity.aux_in_failures.get()),
+            ("aux_out_errors", activity.aux_out_errors.get()),
+            ("late_usb_retirements", activity.late_usb_retirements.get()),
+        ]),
+    }))
 }
 
 #[cfg(test)]
@@ -353,6 +447,7 @@ mod tests {
             Err(io::ErrorKind::TimedOut.into()),
             Err(io::ErrorKind::ConnectionAborted.into()),
             response(1, STATUS_INVALID),
+            response(1, 255),
             Ok(Some(Packet {
                 kind: EVT_RESPONSE,
                 id: 1,
@@ -367,6 +462,102 @@ mod tests {
             assert_eq!(
                 device.calls, 1,
                 "ambiguous/rejected writes must not be replayed"
+            );
+        }
+    }
+    #[test]
+    fn diagnostics_handles_old_firmware_and_validates_new_pages() {
+        use dedi_protocol::diagnostics::{
+            ACTIVITY_PAGE, Activity, HEALTH_PAGE, Health, RESET_CAUSE_KNOWN, UART_PAGE, Uart,
+            VERSION as DIAG_VERSION,
+        };
+        use zerocopy::{FromZeros, IntoBytes};
+        struct Diag {
+            calls: usize,
+            pages: VecDeque<io::Result<Vec<u8>>>,
+        }
+        impl DeviceIo for Diag {
+            fn request(
+                &mut self,
+                kind: u8,
+                data: &[u8],
+                _: &mut dyn FnMut(Packet),
+            ) -> io::Result<Vec<u8>> {
+                assert_eq!(kind, CMD_GET_DIAG);
+                assert_eq!(data, &[self.calls as u8]);
+                self.calls += 1;
+                self.pages
+                    .pop_front()
+                    .expect("unexpected diagnostic request")
+            }
+            fn event(&mut self) -> io::Result<Option<Packet>> {
+                Ok(None)
+            }
+        }
+        let mut info = parse_info(DeviceInfo::new(3, 1, 2_250_000).as_bytes()).unwrap();
+        let mut device = Diag {
+            calls: 0,
+            pages: VecDeque::new(),
+        };
+        assert!(
+            diagnostics(&mut device, &info, &mut |_| {})
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(device.calls, 0);
+        info.flags |= CAP_DIAG;
+        device
+            .pages
+            .push_back(Err(io::ErrorKind::Unsupported.into()));
+        assert!(
+            diagnostics(&mut device, &info, &mut |_| {})
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(device.calls, 1);
+        let mut health = Health::new_zeroed();
+        health.version = DIAG_VERSION;
+        health.page = HEALTH_PAGE;
+        health.board = info.board;
+        health.flags = RESET_CAUSE_KNOWN;
+        health.reset_cause.set(16);
+        health.firmware_version[..5].copy_from_slice(b"0.1.0");
+        let mut uart = Uart::new_zeroed();
+        uart.version = DIAG_VERSION;
+        uart.page = UART_PAGE;
+        uart.rx_bytes_read.set(u32::MAX);
+        let mut activity = Activity::new_zeroed();
+        activity.version = DIAG_VERSION;
+        activity.page = ACTIVITY_PAGE;
+        let pages = [
+            health.as_bytes().to_vec(),
+            uart.as_bytes().to_vec(),
+            activity.as_bytes().to_vec(),
+        ];
+        let mut device = Diag {
+            calls: 0,
+            pages: pages.clone().map(Ok).into(),
+        };
+        let snapshot = diagnostics(&mut device, &info, &mut |_| {})
+            .unwrap()
+            .unwrap();
+        assert_eq!(snapshot.firmware_version, "0.1.0");
+        assert_eq!(snapshot.reset_cause, Some(16));
+        assert_eq!(snapshot.boot_count, None);
+        assert_eq!(snapshot.uart["rx_bytes_read"], u32::MAX);
+        for index in 0..3 {
+            let mut pages = pages.clone();
+            pages[index][0] = 255;
+            let mut device = Diag {
+                calls: 0,
+                pages: pages.map(Ok).into(),
+            };
+            assert_eq!(
+                diagnostics(&mut device, &info, &mut |_| {})
+                    .err()
+                    .unwrap()
+                    .kind(),
+                io::ErrorKind::InvalidData
             );
         }
     }

@@ -1,5 +1,6 @@
 #![no_std]
 
+pub mod diagnostics;
 pub mod sf600;
 pub const USB_VID: u16 = 0x0483;
 pub const USB_PID: u16 = 0xdada;
@@ -13,6 +14,7 @@ pub mod aux {
 
     pub const VERSION: u8 = 1;
     pub const CMD_GET_INFO: u8 = 0x00;
+    pub const CMD_GET_DIAG: u8 = 0x05;
     pub const CMD_UART_FLUSH_RX: u8 = 0x12;
     pub const EVT_UART_OVERFLOW: u8 = 0x91;
 
@@ -79,6 +81,7 @@ pub mod aux {
 
     pub const CAP_OPEN_DRAIN: u8 = 1 << 0;
     pub const CAP_PULSE: u8 = 1 << 1;
+    pub const CAP_DIAG: u8 = 1 << 2;
 
     pub fn payload(packet: &[u8]) -> Option<&[u8]> {
         let header = Header::read_from_bytes(packet.get(..HEADER_LEN)?).ok()?;

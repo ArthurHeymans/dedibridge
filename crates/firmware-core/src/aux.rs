@@ -1,5 +1,9 @@
-use crate::gpio::BoardIo;
+use crate::{
+    diagnostics::{self, ACTIVITY, UartCounters},
+    gpio::BoardIo,
+};
 use dedi_protocol::aux::*;
+use dedi_protocol::diagnostics::{ACTIVITY_PAGE, HEALTH_PAGE, UART_PAGE};
 use embassy_futures::select::{Either, Either4, select, select4};
 use embassy_sync::{
     blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel, signal::Signal,
@@ -46,6 +50,7 @@ struct GpioCommand {
 
 pub struct AuxState {
     info: DeviceInfo,
+    diagnostics: UartCounters,
     rx: Channel<CriticalSectionRawMutex, u8, 256>,
     tx: Channel<CriticalSectionRawMutex, TxPacket, 4>,
     baud: Signal<CriticalSectionRawMutex, RxCommand>,
@@ -59,9 +64,11 @@ pub struct AuxState {
     loss: Signal<CriticalSectionRawMutex, ()>,
 }
 impl AuxState {
-    pub const fn new(info: DeviceInfo) -> Self {
+    pub const fn new(mut info: DeviceInfo) -> Self {
+        info.flags |= CAP_DIAG;
         Self {
             info,
+            diagnostics: UartCounters::new(),
             rx: Channel::new(),
             tx: Channel::new(),
             baud: Signal::new(),
@@ -87,12 +94,19 @@ impl AuxState {
                     self.baud_result.signal(result.is_ok());
                 }
                 Either::Second(Ok(byte)) => {
+                    self.diagnostics.rx_bytes_read.increment();
                     if self.rx.try_send(byte).is_err() {
+                        self.diagnostics.rx_queue_dropped_bytes.increment();
                         self.rx_lost.fetch_add(1, Ordering::Relaxed);
                         self.loss.signal(());
+                    } else {
+                        self.diagnostics
+                            .rx_queue_high_water
+                            .maximum(self.rx.len() as u32);
                     }
                 }
                 Either::Second(Err(_)) => {
+                    self.diagnostics.rx_driver_errors.increment();
                     self.rx_lost.fetch_add(1, Ordering::Relaxed);
                     self.loss.signal(());
                     Timer::after_millis(1).await;
@@ -111,6 +125,7 @@ impl AuxState {
             let packet = self.tx.receive().await;
             self.tx_busy.store(true, Ordering::SeqCst);
             if uart.write(&packet.bytes[..packet.len]).await.is_err() {
+                self.diagnostics.tx_driver_errors.increment();
                 self.tx_lost.fetch_add(packet.len as u32, Ordering::Relaxed);
                 self.loss.signal(());
             }
@@ -148,10 +163,14 @@ impl AuxState {
         let Some(packet) = encode(&mut buffer, kind, id, data) else {
             return false;
         };
-        matches!(
+        let sent = matches!(
             with_timeout(Duration::from_millis(100), ep.write(packet)).await,
             Ok(Ok(()))
-        )
+        );
+        if !sent {
+            ACTIVITY.aux_in_failures.increment();
+        }
+        sent
     }
     async fn response(
         &self,
@@ -180,6 +199,36 @@ impl AuxState {
         if command == CMD_GET_INFO && data.is_empty() {
             self.response(ep, id, command, STATUS_OK, self.info.as_bytes())
                 .await;
+            return;
+        }
+        if command == CMD_GET_DIAG && data.len() == 1 {
+            match data[0] {
+                HEALTH_PAGE => {
+                    self.response(
+                        ep,
+                        id,
+                        command,
+                        STATUS_OK,
+                        diagnostics::health(self.info.board).as_bytes(),
+                    )
+                    .await
+                }
+                UART_PAGE => {
+                    self.response(
+                        ep,
+                        id,
+                        command,
+                        STATUS_OK,
+                        self.diagnostics.snapshot().as_bytes(),
+                    )
+                    .await
+                }
+                ACTIVITY_PAGE => {
+                    self.response(ep, id, command, STATUS_OK, ACTIVITY.snapshot().as_bytes())
+                        .await
+                }
+                _ => self.response(ep, id, command, STATUS_INVALID, &[]).await,
+            }
             return;
         }
         let mut status = STATUS_INVALID;
@@ -233,6 +282,7 @@ impl AuxState {
             };
             tx.bytes[..data.len()].copy_from_slice(data);
             status = if self.tx.try_send(tx).is_ok() {
+                self.diagnostics.tx_bytes_accepted.add(data.len() as u32);
                 STATUS_OK
             } else {
                 STATUS_BUSY
@@ -279,6 +329,7 @@ impl AuxState {
                     self.command(&mut input, packet).await;
                 }
                 Either4::First(Err(_)) => {
+                    ACTIVITY.aux_out_errors.increment();
                     Timer::after_millis(1).await;
                 }
                 Either4::Second(state) => {
@@ -299,6 +350,8 @@ impl AuxState {
                     .packet(&mut input, EVT_UART_DATA, 0, &uart_buf[..len])
                     .await
                 {
+                    self.diagnostics.rx_delivery_failures.increment();
+                    self.diagnostics.rx_delivery_dropped_bytes.add(len as u32);
                     self.rx_lost.fetch_add(len as u32, Ordering::Relaxed);
                 }
                 len = 0;
