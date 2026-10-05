@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/*", "boards/*", "tools/*"]
+members = ["crates/*", "boards/*", "tools/*", "xtask"]
 default-members = ["crates/protocol", "crates/firmware-core", "tools/dedibridgectl"]
 resolver = "3"
 

@@ -39,29 +39,41 @@ no sibling HAL checkout is needed.
 
 ```sh
 rustup toolchain install nightly --component rust-src
-./dev test
-./dev check
-./dev build rp2040
-./dev build ch32v307
-./dev build stm32f103
-./dev size stm32f103
+cargo xtask test
+cargo xtask check
+cargo xtask build rp2040
+cargo xtask build ch32v307
+cargo xtask build stm32f103
+cargo xtask size stm32f103
 # Explicit hardware operation, with probe-rs-tools installed:
-./dev flash stm32f103
+cargo xtask flash stm32f103
 ```
 
-`./dev fmt` formats only this workspace. `./dev check` runs warning-denied
-host/core/protocol Clippy, firmware Clippy for each target, and separate release
-builds for all boards. Do not use
-`cargo build --workspace` or `cargo clippy --workspace`: architecture, MCU,
+`cargo xtask fmt` formats only workspace members, not external path dependencies;
+`cargo xtask fmt --check` checks formatting. `cargo xtask test` runs
+host/core/protocol and task-runner tests plus the Go adapter's race tests.
+`cargo xtask check` runs warning-denied host/core/protocol/task-runner Clippy,
+firmware Clippy for each target, and separate release builds for all boards.
+Use `cargo xtask clippy BOARD` for a single board, or `cargo xtask --help` for
+all tasks. Do not use `cargo build --workspace` or `cargo clippy --workspace`: architecture, MCU,
 executor, and time-driver features cannot be combined into one compilation.
 The workspace has **no default embedded target or global build-std setting**;
 plain `cargo test` tests protocol/core/host crates on the host.
+
+The Rust task runner in `xtask/` replaces the old `dev` shell script. It uses
+`cargo_metadata` for workspace discovery and Cargo's JSON messages for the actual
+firmware executable paths, including cached builds and `CARGO_TARGET_DIR`
+overrides. `cargo xtask build BOARD` prints the ELF path. Toolchains and board
+flags remain explicit; only `cargo xtask flash BOARD` invokes probe-rs.
+External tools (`go`, `probe-rs`, `llvm-size`, `elf2uf2-rs`) must be on `PATH`
+for their respective tasks.
 
 CI uploads all three board ELFs and Pico UF2 as the `dedibridge-firmware`
 artifact. Tags publish those same files as release assets: `dedi-rp2040.elf`,
 `dedi-rp2040.uf2`, `dedi-ch32v307.elf`, and `dedi-stm32f103.elf`. ELF downloads
 are for probe-rs; the Pico UF2 is for BOOTSEL drag-and-drop. Generate the same
-bundle locally with `./dev artifacts` (requires `elf2uf2-rs` 2.2.0).
+bundle locally with `cargo xtask artifacts` (requires `elf2uf2-rs` 2.2.0).
+The bundle is written to `artifacts/` in the workspace root.
 
 Standalone Pico UF2 creation:
 
@@ -133,18 +145,20 @@ services.udev.extraRules = ''
 ```
 
 Run the daemon and dutagent as the same account for the owner-only socket.
+Host arguments are forwarded unchanged; use `cargo xtask host -- --help` for
+`dedibridgectl` help rather than the task runner's help.
 
 ```sh
-./dev host list
-./dev host --socket /run/user/1000/board-a.sock daemon --serial YOUR_USB_SERIAL
+cargo xtask host list
+cargo xtask host --socket /run/user/1000/board-a.sock daemon --serial YOUR_USB_SERIAL
 # Separate terminals, while flashprog owns interface 0:
-./dev host --socket /run/user/1000/board-a.sock diagnostics
-./dev host --socket /run/user/1000/board-a.sock state
-./dev host --socket /run/user/1000/board-a.sock reset
-./dev host --socket /run/user/1000/board-a.sock poweroff
-./dev host --socket /run/user/1000/board-a.sock console --baud 115200
+cargo xtask host --socket /run/user/1000/board-a.sock diagnostics
+cargo xtask host --socket /run/user/1000/board-a.sock state
+cargo xtask host --socket /run/user/1000/board-a.sock reset
+cargo xtask host --socket /run/user/1000/board-a.sock poweroff
+cargo xtask host --socket /run/user/1000/board-a.sock console --baud 115200
 # Or obtain a PTY for picocom and other terminal programs:
-./dev host --socket /run/user/1000/board-a.sock pty --baud 115200
+cargo xtask host --socket /run/user/1000/board-a.sock pty --baud 115200
 ```
 
 Original named GPIO commands also work: `dir reset out`, `set reset 0`,

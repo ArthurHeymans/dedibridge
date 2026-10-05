@@ -19,16 +19,20 @@ jobs:
           cache: false
       - name: Install Rust toolchains
         run: |
-          rustup toolchain install stable --profile minimal --component rustfmt --component clippy --target thumbv6m-none-eabi --target thumbv7m-none-eabi
-          rustup toolchain install nightly --profile minimal --component rust-src --component clippy
-      - name: Protocol, core, host and Go adapter tests
-        run: ./dev test
+          rustup toolchain install stable --profile minimal \
+            --component rustfmt --component clippy \
+            --target thumbv6m-none-eabi --target thumbv7m-none-eabi
+          rustup toolchain install nightly --profile minimal \
+            --component rust-src --component clippy
+      - name: Protocol, core, host, task runner and Go adapter tests
+        run: cargo xtask test
       - name: Formatting, Clippy and all firmware targets
-        run: ./dev check
+        run: cargo xtask check
       - name: Package board firmware
         run: |
-          cargo install elf2uf2-rs --version 2.2.0 --no-default-features --locked
-          ./dev artifacts
+          cargo install elf2uf2-rs --version 2.2.0 \
+            --no-default-features --locked
+          cargo xtask artifacts
       - uses: actions/upload-artifact@v7
         with:
           name: dedibridge-firmware

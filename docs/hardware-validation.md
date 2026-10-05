@@ -46,7 +46,7 @@ For each board:
 1. Inspect the pinout, I/O voltage, CS/WP/HOLD pull-ups, crystal, USB pull-up,
    and debugger wiring. Verify reset/power outputs start released and the idle
    flash bus is Hi-Z; check Pico IO2/IO3 as well as CS/SCK/MOSI.
-2. Flash the appropriate ELF with `./dev flash BOARD`. Verify USB descriptors,
+2. Flash the appropriate ELF with `cargo xtask flash BOARD`. Verify USB descriptors,
    the unique serial, EP1/2 on interface 0, and EP3/4 on interface 1. F103 must
    fit its 64 KiB flash/20 KiB SRAM/512-byte PMA budget. CH32 bulk descriptors
    must be 512-byte MPS on a high-speed link.
