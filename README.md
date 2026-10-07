@@ -2,7 +2,8 @@
 
 Turn a Pico, CH32V307 devboard, or Blue Pill into an SF600-compatible SPI flash
 programmer, with a UART bridge and reset/power-button control over the same USB
-cable. Use [flashprog](https://flashprog.org/) to read, write, and erase flash.
+cable. Use [flashprog](https://flashprog.org/) or
+[rflasher](https://github.com/ArthurHeymans/rflasher) to read, write, and erase flash.
 
 Successor to [DediPico](https://github.com/ArthurHeymans/dedipico) and
 [dedich32](https://github.com/ArthurHeymans/dedich32).

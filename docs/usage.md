@@ -26,6 +26,18 @@ flashprog -p dediprog:iomode=quad -r dump.bin
 flashprog -p dediprog:iomode=dual -r dump.bin
 ```
 
+[rflasher](https://github.com/ArthurHeymans/rflasher) also supports the `dediprog`
+backend:
+
+```sh
+rflasher probe -p dediprog
+rflasher read -p dediprog dump.bin
+rflasher write -p dediprog image.bin --allow-full-chip
+```
+
+rflasher is alpha software; its documentation recommends flashprog for critical
+work. Read a backup before writing with either tool.
+
 The device identifies as an SF600 (VID:PID `0483:dada`, firmware V7.2.22,
 protocol V3). Its serial and flashprog EEPROM selection ID come from the board's
 unique ID. **Voltage commands do not switch power.** Read the
