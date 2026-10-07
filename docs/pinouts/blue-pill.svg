@@ -1,0 +1,336 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 940" role="img" aria-labelledby="title desc">
+<title id="title">STM32 Blue Pill — DediBridge pinout</title>
+<desc id="desc">STM32F103C8 · header lists, not physical placement · numbering follows STM32-base. Functions are labeled in text and grouped by color. See the board guide for wiring precautions and a text pin table.</desc>
+<style>
+text { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; fill: #172b3a; }
+.paper { fill: #f8fafc; stroke: #d8e2eb; }
+.eyebrow { font-size: 13px; font-weight: 700; letter-spacing: 2px; fill: #527084; }
+.title { font-size: 32px; font-weight: 750; }
+.subtitle { font-size: 16px; fill: #526777; }
+.label { font-size: 15px; font-weight: 600; }
+.pin { font-family: ui-monospace, monospace; font-size: 14px; font-weight: 700; }
+.number { font-family: ui-monospace, monospace; font-size: 12px; fill: #526777; }
+.muted { fill: #647988; }
+.panel { fill: white; stroke: #d8e2eb; }
+.board { fill: #15584d; stroke: #0e4038; stroke-width: 2; }
+.board-text { fill: #f0fdf4; font-size: 15px; font-weight: 700; }
+.chip { fill: #213541; stroke: #8bb3ab; }
+.spi rect, .spi circle { fill: #dbeafe; stroke: #93b6df; }
+.spi text { fill: #17477b; }
+.uart rect, .uart circle { fill: #e0e7ff; stroke: #aaaee1; }
+.uart text { fill: #373b83; }
+.control rect, .control circle { fill: #fef3c7; stroke: #dfc77d; }
+.control text { fill: #72500c; }
+.led rect, .led circle { fill: #fce7f3; stroke: #dbadca; }
+.led text { fill: #833d67; }
+.power rect, .power circle { fill: #dcfce7; stroke: #91c4a1; }
+.power text { fill: #255d38; }
+.usb rect, .usb circle { fill: #cffafe; stroke: #83c7d0; }
+.usb text { fill: #165d68; }
+.idle rect, .idle circle { fill: #edf2f6; stroke: #d8e2eb; }
+.idle text { fill: #526777; }
+</style>
+<rect x="1" y="1" width="1078" height="938" rx="22" class="paper"/>
+<text x="40" y="42" class="eyebrow" text-anchor="start">DEDIBRIDGE / WIRING GUIDE</text>
+<text x="40" y="86" class="title" text-anchor="start">STM32 Blue Pill</text>
+<text x="40" y="118" class="subtitle" text-anchor="start">STM32F103C8 · header lists, not physical placement · numbering follows STM32-base</text>
+<g class="spi"><rect x="40" y="145" width="14" height="14" rx="4"/></g>
+<text x="63" y="158" class="pin" text-anchor="start">SPI flash</text>
+<g class="uart"><rect x="210" y="145" width="14" height="14" rx="4"/></g>
+<text x="233" y="158" class="pin" text-anchor="start">UART</text>
+<g class="control"><rect x="345" y="145" width="14" height="14" rx="4"/></g>
+<text x="368" y="158" class="pin" text-anchor="start">Board control</text>
+<g class="led"><rect x="565" y="145" width="14" height="14" rx="4"/></g>
+<text x="588" y="158" class="pin" text-anchor="start">LEDs</text>
+<g class="power"><rect x="700" y="145" width="14" height="14" rx="4"/></g>
+<text x="723" y="158" class="pin" text-anchor="start">Power / GND</text>
+<g class="usb"><rect x="920" y="145" width="14" height="14" rx="4"/></g>
+<text x="943" y="158" class="pin" text-anchor="start">USB</text>
+<rect x="40" y="185" width="416" height="627" rx="14" class="panel"/>
+<rect x="624" y="185" width="416" height="627" rx="14" class="panel"/>
+<text x="248" y="219" class="eyebrow" text-anchor="middle">HEADER 1</text>
+<text x="832" y="219" class="eyebrow" text-anchor="middle">HEADER 2</text>
+<g class="idle">
+<rect x="321" y="235" width="64" height="24" rx="6"/>
+<circle cx="416" cy="247" r="11"/>
+<text x="353" y="252" class="pin" text-anchor="middle">VBAT</text>
+<text x="305" y="252" class="label" text-anchor="end">Unused</text>
+</g>
+<text x="416" y="251" class="number" text-anchor="middle">1</text>
+<g class="power">
+<rect x="695" y="235" width="64" height="24" rx="6"/>
+<circle cx="664" cy="247" r="11"/>
+<text x="727" y="252" class="pin" text-anchor="middle">3V3</text>
+<text x="786" y="252" class="label" text-anchor="start">3.3 V rail</text>
+</g>
+<text x="664" y="251" class="number" text-anchor="middle">1</text>
+<g class="led">
+<rect x="321" y="263" width="64" height="24" rx="6"/>
+<circle cx="416" cy="275" r="11"/>
+<text x="353" y="280" class="pin" text-anchor="middle">PC13</text>
+<text x="305" y="280" class="label" text-anchor="end">Pass LED · onboard</text>
+</g>
+<text x="416" y="279" class="number" text-anchor="middle">2</text>
+<g class="power">
+<rect x="695" y="263" width="64" height="24" rx="6"/>
+<circle cx="664" cy="275" r="11"/>
+<text x="727" y="280" class="pin" text-anchor="middle">GND</text>
+<text x="786" y="280" class="label" text-anchor="start">Ground</text>
+</g>
+<text x="664" y="279" class="number" text-anchor="middle">2</text>
+<g class="idle">
+<rect x="321" y="291" width="64" height="24" rx="6"/>
+<circle cx="416" cy="303" r="11"/>
+<text x="353" y="308" class="pin" text-anchor="middle">PC14</text>
+<text x="305" y="308" class="label" text-anchor="end">Unused</text>
+</g>
+<text x="416" y="307" class="number" text-anchor="middle">3</text>
+<g class="power">
+<rect x="695" y="291" width="64" height="24" rx="6"/>
+<circle cx="664" cy="303" r="11"/>
+<text x="727" y="308" class="pin" text-anchor="middle">5V</text>
+<text x="786" y="308" class="label" text-anchor="start">USB VBUS · not flash VCC</text>
+</g>
+<text x="664" y="307" class="number" text-anchor="middle">3</text>
+<g class="idle">
+<rect x="321" y="319" width="64" height="24" rx="6"/>
+<circle cx="416" cy="331" r="11"/>
+<text x="353" y="336" class="pin" text-anchor="middle">PC15</text>
+<text x="305" y="336" class="label" text-anchor="end">Unused</text>
+</g>
+<text x="416" y="335" class="number" text-anchor="middle">4</text>
+<g class="control">
+<rect x="695" y="319" width="64" height="24" rx="6"/>
+<circle cx="664" cy="331" r="11"/>
+<text x="727" y="336" class="pin" text-anchor="middle">PB9</text>
+<text x="786" y="336" class="label" text-anchor="start">Target POWER_SW#</text>
+</g>
+<text x="664" y="335" class="number" text-anchor="middle">4</text>
+<g class="idle">
+<rect x="321" y="347" width="64" height="24" rx="6"/>
+<circle cx="416" cy="359" r="11"/>
+<text x="353" y="364" class="pin" text-anchor="middle">PA0</text>
+<text x="305" y="364" class="label" text-anchor="end">Unused</text>
+</g>
+<text x="416" y="363" class="number" text-anchor="middle">5</text>
+<g class="control">
+<rect x="695" y="347" width="64" height="24" rx="6"/>
+<circle cx="664" cy="359" r="11"/>
+<text x="727" y="364" class="pin" text-anchor="middle">PB8</text>
+<text x="786" y="364" class="label" text-anchor="start">Target RESET#</text>
+</g>
+<text x="664" y="363" class="number" text-anchor="middle">5</text>
+<g class="idle">
+<rect x="321" y="375" width="64" height="24" rx="6"/>
+<circle cx="416" cy="387" r="11"/>
+<text x="353" y="392" class="pin" text-anchor="middle">PA1</text>
+<text x="305" y="392" class="label" text-anchor="end">Unused</text>
+</g>
+<text x="416" y="391" class="number" text-anchor="middle">6</text>
+<g class="idle">
+<rect x="695" y="375" width="64" height="24" rx="6"/>
+<circle cx="664" cy="387" r="11"/>
+<text x="727" y="392" class="pin" text-anchor="middle">PB7</text>
+<text x="786" y="392" class="label" text-anchor="start">Unused</text>
+</g>
+<text x="664" y="391" class="number" text-anchor="middle">6</text>
+<g class="uart">
+<rect x="321" y="403" width="64" height="24" rx="6"/>
+<circle cx="416" cy="415" r="11"/>
+<text x="353" y="420" class="pin" text-anchor="middle">PA2</text>
+<text x="305" y="420" class="label" text-anchor="end">UART TX → target RX</text>
+</g>
+<text x="416" y="419" class="number" text-anchor="middle">7</text>
+<g class="idle">
+<rect x="695" y="403" width="64" height="24" rx="6"/>
+<circle cx="664" cy="415" r="11"/>
+<text x="727" y="420" class="pin" text-anchor="middle">PB6</text>
+<text x="786" y="420" class="label" text-anchor="start">Unused</text>
+</g>
+<text x="664" y="419" class="number" text-anchor="middle">7</text>
+<g class="uart">
+<rect x="321" y="431" width="64" height="24" rx="6"/>
+<circle cx="416" cy="443" r="11"/>
+<text x="353" y="448" class="pin" text-anchor="middle">PA3</text>
+<text x="305" y="448" class="label" text-anchor="end">UART RX ← target TX</text>
+</g>
+<text x="416" y="447" class="number" text-anchor="middle">8</text>
+<g class="idle">
+<rect x="695" y="431" width="64" height="24" rx="6"/>
+<circle cx="664" cy="443" r="11"/>
+<text x="727" y="448" class="pin" text-anchor="middle">PB5</text>
+<text x="786" y="448" class="label" text-anchor="start">Unused</text>
+</g>
+<text x="664" y="447" class="number" text-anchor="middle">8</text>
+<g class="idle">
+<rect x="321" y="459" width="64" height="24" rx="6"/>
+<circle cx="416" cy="471" r="11"/>
+<text x="353" y="476" class="pin" text-anchor="middle">PA4</text>
+<text x="305" y="476" class="label" text-anchor="end">Unused</text>
+</g>
+<text x="416" y="475" class="number" text-anchor="middle">9</text>
+<g class="idle">
+<rect x="695" y="459" width="64" height="24" rx="6"/>
+<circle cx="664" cy="471" r="11"/>
+<text x="727" y="476" class="pin" text-anchor="middle">PB4</text>
+<text x="786" y="476" class="label" text-anchor="start">Unused</text>
+</g>
+<text x="664" y="475" class="number" text-anchor="middle">9</text>
+<g class="idle">
+<rect x="321" y="487" width="64" height="24" rx="6"/>
+<circle cx="416" cy="499" r="11"/>
+<text x="353" y="504" class="pin" text-anchor="middle">PA5</text>
+<text x="305" y="504" class="label" text-anchor="end">Unused</text>
+</g>
+<text x="416" y="503" class="number" text-anchor="middle">10</text>
+<g class="idle">
+<rect x="695" y="487" width="64" height="24" rx="6"/>
+<circle cx="664" cy="499" r="11"/>
+<text x="727" y="504" class="pin" text-anchor="middle">PB3</text>
+<text x="786" y="504" class="label" text-anchor="start">Unused</text>
+</g>
+<text x="664" y="503" class="number" text-anchor="middle">10</text>
+<g class="idle">
+<rect x="321" y="515" width="64" height="24" rx="6"/>
+<circle cx="416" cy="527" r="11"/>
+<text x="353" y="532" class="pin" text-anchor="middle">PA6</text>
+<text x="305" y="532" class="label" text-anchor="end">Unused</text>
+</g>
+<text x="416" y="531" class="number" text-anchor="middle">11</text>
+<g class="idle">
+<rect x="695" y="515" width="64" height="24" rx="6"/>
+<circle cx="664" cy="527" r="11"/>
+<text x="727" y="532" class="pin" text-anchor="middle">PA15</text>
+<text x="786" y="532" class="label" text-anchor="start">Unused</text>
+</g>
+<text x="664" y="531" class="number" text-anchor="middle">11</text>
+<g class="idle">
+<rect x="321" y="543" width="64" height="24" rx="6"/>
+<circle cx="416" cy="555" r="11"/>
+<text x="353" y="560" class="pin" text-anchor="middle">PA7</text>
+<text x="305" y="560" class="label" text-anchor="end">Unused</text>
+</g>
+<text x="416" y="559" class="number" text-anchor="middle">12</text>
+<g class="usb">
+<rect x="695" y="543" width="64" height="24" rx="6"/>
+<circle cx="664" cy="555" r="11"/>
+<text x="727" y="560" class="pin" text-anchor="middle">PA12</text>
+<text x="786" y="560" class="label" text-anchor="start">USB D+</text>
+</g>
+<text x="664" y="559" class="number" text-anchor="middle">12</text>
+<g class="idle">
+<rect x="321" y="571" width="64" height="24" rx="6"/>
+<circle cx="416" cy="583" r="11"/>
+<text x="353" y="588" class="pin" text-anchor="middle">PB0</text>
+<text x="305" y="588" class="label" text-anchor="end">Unused</text>
+</g>
+<text x="416" y="587" class="number" text-anchor="middle">13</text>
+<g class="usb">
+<rect x="695" y="571" width="64" height="24" rx="6"/>
+<circle cx="664" cy="583" r="11"/>
+<text x="727" y="588" class="pin" text-anchor="middle">PA11</text>
+<text x="786" y="588" class="label" text-anchor="start">USB D−</text>
+</g>
+<text x="664" y="587" class="number" text-anchor="middle">13</text>
+<g class="idle">
+<rect x="321" y="599" width="64" height="24" rx="6"/>
+<circle cx="416" cy="611" r="11"/>
+<text x="353" y="616" class="pin" text-anchor="middle">PB1</text>
+<text x="305" y="616" class="label" text-anchor="end">Unused</text>
+</g>
+<text x="416" y="615" class="number" text-anchor="middle">14</text>
+<g class="idle">
+<rect x="695" y="599" width="64" height="24" rx="6"/>
+<circle cx="664" cy="611" r="11"/>
+<text x="727" y="616" class="pin" text-anchor="middle">PA10</text>
+<text x="786" y="616" class="label" text-anchor="start">Unused</text>
+</g>
+<text x="664" y="615" class="number" text-anchor="middle">14</text>
+<g class="control">
+<rect x="321" y="627" width="64" height="24" rx="6"/>
+<circle cx="416" cy="639" r="11"/>
+<text x="353" y="644" class="pin" text-anchor="middle">PB10</text>
+<text x="305" y="644" class="label" text-anchor="end">Power-state input</text>
+</g>
+<text x="416" y="643" class="number" text-anchor="middle">15</text>
+<g class="idle">
+<rect x="695" y="627" width="64" height="24" rx="6"/>
+<circle cx="664" cy="639" r="11"/>
+<text x="727" y="644" class="pin" text-anchor="middle">PA9</text>
+<text x="786" y="644" class="label" text-anchor="start">Unused</text>
+</g>
+<text x="664" y="643" class="number" text-anchor="middle">15</text>
+<g class="control">
+<rect x="321" y="655" width="64" height="24" rx="6"/>
+<circle cx="416" cy="667" r="11"/>
+<text x="353" y="672" class="pin" text-anchor="middle">PB11</text>
+<text x="305" y="672" class="label" text-anchor="end">Auxiliary-state input</text>
+</g>
+<text x="416" y="671" class="number" text-anchor="middle">16</text>
+<g class="idle">
+<rect x="695" y="655" width="64" height="24" rx="6"/>
+<circle cx="664" cy="667" r="11"/>
+<text x="727" y="672" class="pin" text-anchor="middle">PA8</text>
+<text x="786" y="672" class="label" text-anchor="start">Unused</text>
+</g>
+<text x="664" y="671" class="number" text-anchor="middle">16</text>
+<g class="idle">
+<rect x="321" y="683" width="64" height="24" rx="6"/>
+<circle cx="416" cy="695" r="11"/>
+<text x="353" y="700" class="pin" text-anchor="middle">NRST</text>
+<text x="305" y="700" class="label" text-anchor="end">Blue Pill reset · not target</text>
+</g>
+<text x="416" y="699" class="number" text-anchor="middle">17</text>
+<g class="spi">
+<rect x="695" y="683" width="64" height="24" rx="6"/>
+<circle cx="664" cy="695" r="11"/>
+<text x="727" y="700" class="pin" text-anchor="middle">PB15</text>
+<text x="786" y="700" class="label" text-anchor="start">Flash MOSI</text>
+</g>
+<text x="664" y="699" class="number" text-anchor="middle">17</text>
+<g class="power">
+<rect x="321" y="711" width="64" height="24" rx="6"/>
+<circle cx="416" cy="723" r="11"/>
+<text x="353" y="728" class="pin" text-anchor="middle">3V3</text>
+<text x="305" y="728" class="label" text-anchor="end">3.3 V rail</text>
+</g>
+<text x="416" y="727" class="number" text-anchor="middle">18</text>
+<g class="spi">
+<rect x="695" y="711" width="64" height="24" rx="6"/>
+<circle cx="664" cy="723" r="11"/>
+<text x="727" y="728" class="pin" text-anchor="middle">PB14</text>
+<text x="786" y="728" class="label" text-anchor="start">Flash MISO</text>
+</g>
+<text x="664" y="727" class="number" text-anchor="middle">18</text>
+<g class="power">
+<rect x="321" y="739" width="64" height="24" rx="6"/>
+<circle cx="416" cy="751" r="11"/>
+<text x="353" y="756" class="pin" text-anchor="middle">GND</text>
+<text x="305" y="756" class="label" text-anchor="end">Ground</text>
+</g>
+<text x="416" y="755" class="number" text-anchor="middle">19</text>
+<g class="spi">
+<rect x="695" y="739" width="64" height="24" rx="6"/>
+<circle cx="664" cy="751" r="11"/>
+<text x="727" y="756" class="pin" text-anchor="middle">PB13</text>
+<text x="786" y="756" class="label" text-anchor="start">Flash SCK</text>
+</g>
+<text x="664" y="755" class="number" text-anchor="middle">19</text>
+<g class="power">
+<rect x="321" y="767" width="64" height="24" rx="6"/>
+<circle cx="416" cy="779" r="11"/>
+<text x="353" y="784" class="pin" text-anchor="middle">GND</text>
+<text x="305" y="784" class="label" text-anchor="end">Ground</text>
+</g>
+<text x="416" y="783" class="number" text-anchor="middle">20</text>
+<g class="spi">
+<rect x="695" y="767" width="64" height="24" rx="6"/>
+<circle cx="664" cy="779" r="11"/>
+<text x="727" y="784" class="pin" text-anchor="middle">PB12</text>
+<text x="786" y="784" class="label" text-anchor="start">Flash CS#</text>
+</g>
+<text x="664" y="783" class="number" text-anchor="middle">20</text>
+<text x="40" y="846" class="label" text-anchor="start">SWD header: 3V3 / DIO (PA13) / CLK (PA14) / GND</text>
+<text x="40" y="876" class="subtitle" text-anchor="start">8 MHz crystal · 1.5 kΩ USB D+ pull-up · target RESET# is PB8, not NRST</text>
+<text x="40" y="906" class="subtitle" text-anchor="start">WP# / HOLD#: external pull-ups. Never connect competing supplies. Read wiring precautions.</text>
+</svg>

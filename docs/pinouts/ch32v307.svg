@@ -1,0 +1,131 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 910" role="img" aria-labelledby="title desc">
+<title id="title">CH32V307 devboard — DediBridge pinout</title>
+<desc id="desc">CH32V307VCT6 · signal map only · match GPIO labels to your board schematic. Functions are labeled in text and grouped by color. See the board guide for wiring precautions and a text pin table.</desc>
+<style>
+text { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; fill: #172b3a; }
+.paper { fill: #f8fafc; stroke: #d8e2eb; }
+.eyebrow { font-size: 13px; font-weight: 700; letter-spacing: 2px; fill: #527084; }
+.title { font-size: 32px; font-weight: 750; }
+.subtitle { font-size: 16px; fill: #526777; }
+.label { font-size: 15px; font-weight: 600; }
+.pin { font-family: ui-monospace, monospace; font-size: 14px; font-weight: 700; }
+.number { font-family: ui-monospace, monospace; font-size: 12px; fill: #526777; }
+.muted { fill: #647988; }
+.panel { fill: white; stroke: #d8e2eb; }
+.board { fill: #15584d; stroke: #0e4038; stroke-width: 2; }
+.board-text { fill: #f0fdf4; font-size: 15px; font-weight: 700; }
+.chip { fill: #213541; stroke: #8bb3ab; }
+.spi rect, .spi circle { fill: #dbeafe; stroke: #93b6df; }
+.spi text { fill: #17477b; }
+.uart rect, .uart circle { fill: #e0e7ff; stroke: #aaaee1; }
+.uart text { fill: #373b83; }
+.control rect, .control circle { fill: #fef3c7; stroke: #dfc77d; }
+.control text { fill: #72500c; }
+.led rect, .led circle { fill: #fce7f3; stroke: #dbadca; }
+.led text { fill: #833d67; }
+.power rect, .power circle { fill: #dcfce7; stroke: #91c4a1; }
+.power text { fill: #255d38; }
+.usb rect, .usb circle { fill: #cffafe; stroke: #83c7d0; }
+.usb text { fill: #165d68; }
+.idle rect, .idle circle { fill: #edf2f6; stroke: #d8e2eb; }
+.idle text { fill: #526777; }
+</style>
+<rect x="1" y="1" width="1078" height="908" rx="22" class="paper"/>
+<text x="40" y="42" class="eyebrow" text-anchor="start">DEDIBRIDGE / WIRING GUIDE</text>
+<text x="40" y="86" class="title" text-anchor="start">CH32V307 devboard</text>
+<text x="40" y="118" class="subtitle" text-anchor="start">CH32V307VCT6 · signal map only · match GPIO labels to your board schematic</text>
+<g class="spi"><rect x="40" y="145" width="14" height="14" rx="4"/></g>
+<text x="63" y="158" class="pin" text-anchor="start">SPI flash</text>
+<g class="uart"><rect x="210" y="145" width="14" height="14" rx="4"/></g>
+<text x="233" y="158" class="pin" text-anchor="start">UART</text>
+<g class="control"><rect x="345" y="145" width="14" height="14" rx="4"/></g>
+<text x="368" y="158" class="pin" text-anchor="start">Board control</text>
+<g class="led"><rect x="565" y="145" width="14" height="14" rx="4"/></g>
+<text x="588" y="158" class="pin" text-anchor="start">LEDs</text>
+<g class="power"><rect x="700" y="145" width="14" height="14" rx="4"/></g>
+<text x="723" y="158" class="pin" text-anchor="start">Power / GND</text>
+<g class="usb"><rect x="920" y="145" width="14" height="14" rx="4"/></g>
+<text x="943" y="158" class="pin" text-anchor="start">USB</text>
+<rect x="40" y="192" width="480" height="219" rx="14" class="panel"/>
+<text x="62" y="224" class="eyebrow" text-anchor="start">SPI FLASH / SPI2</text>
+<g class="spi"><rect x="60" y="239" width="88" height="28" rx="6"/>
+<text x="104" y="258" class="pin" text-anchor="middle">PB12</text>
+<text x="166" y="258" class="label" text-anchor="start">CS#</text>
+</g>
+<g class="spi"><rect x="60" y="277" width="88" height="28" rx="6"/>
+<text x="104" y="296" class="pin" text-anchor="middle">PB13</text>
+<text x="166" y="296" class="label" text-anchor="start">SCK</text>
+</g>
+<g class="spi"><rect x="60" y="315" width="88" height="28" rx="6"/>
+<text x="104" y="334" class="pin" text-anchor="middle">PB15</text>
+<text x="166" y="334" class="label" text-anchor="start">MOSI / IO0</text>
+</g>
+<g class="spi"><rect x="60" y="353" width="88" height="28" rx="6"/>
+<text x="104" y="372" class="pin" text-anchor="middle">PB14</text>
+<text x="166" y="372" class="label" text-anchor="start">MISO / IO1</text>
+</g>
+<rect x="560" y="192" width="480" height="219" rx="14" class="panel"/>
+<text x="582" y="224" class="eyebrow" text-anchor="start">TARGET BOARD CONTROL</text>
+<g class="control"><rect x="580" y="239" width="88" height="28" rx="6"/>
+<text x="624" y="258" class="pin" text-anchor="middle">PB8</text>
+<text x="686" y="258" class="label" text-anchor="start">RESET# · open-drain</text>
+</g>
+<g class="control"><rect x="580" y="277" width="88" height="28" rx="6"/>
+<text x="624" y="296" class="pin" text-anchor="middle">PB9</text>
+<text x="686" y="296" class="label" text-anchor="start">POWER_SW# · open-drain</text>
+</g>
+<g class="control"><rect x="580" y="315" width="88" height="28" rx="6"/>
+<text x="624" y="334" class="pin" text-anchor="middle">PB10</text>
+<text x="686" y="334" class="label" text-anchor="start">Power-state input</text>
+</g>
+<g class="control"><rect x="580" y="353" width="88" height="28" rx="6"/>
+<text x="624" y="372" class="pin" text-anchor="middle">PB11</text>
+<text x="686" y="372" class="label" text-anchor="start">Auxiliary-state input</text>
+</g>
+<rect x="40" y="439" width="480" height="143" rx="14" class="panel"/>
+<text x="62" y="471" class="eyebrow" text-anchor="start">UART / USART2</text>
+<g class="uart"><rect x="60" y="486" width="88" height="28" rx="6"/>
+<text x="104" y="505" class="pin" text-anchor="middle">PA2</text>
+<text x="166" y="505" class="label" text-anchor="start">TX → target RX</text>
+</g>
+<g class="uart"><rect x="60" y="524" width="88" height="28" rx="6"/>
+<text x="104" y="543" class="pin" text-anchor="middle">PA3</text>
+<text x="166" y="543" class="label" text-anchor="start">RX ← target TX</text>
+</g>
+<rect x="560" y="439" width="480" height="181" rx="14" class="panel"/>
+<text x="582" y="471" class="eyebrow" text-anchor="start">OPTIONAL LEDS / ACTIVE-HIGH</text>
+<g class="led"><rect x="580" y="486" width="88" height="28" rx="6"/>
+<text x="624" y="505" class="pin" text-anchor="middle">PC0</text>
+<text x="686" y="505" class="label" text-anchor="start">Pass</text>
+</g>
+<g class="led"><rect x="580" y="524" width="88" height="28" rx="6"/>
+<text x="624" y="543" class="pin" text-anchor="middle">PC1</text>
+<text x="686" y="543" class="label" text-anchor="start">Busy</text>
+</g>
+<g class="led"><rect x="580" y="562" width="88" height="28" rx="6"/>
+<text x="624" y="581" class="pin" text-anchor="middle">PC2</text>
+<text x="686" y="581" class="label" text-anchor="start">Error</text>
+</g>
+<rect x="40" y="602" width="480" height="143" rx="14" class="panel"/>
+<text x="62" y="634" class="eyebrow" text-anchor="start">USB HIGH SPEED / 480 MBIT/S</text>
+<g class="usb"><rect x="60" y="649" width="88" height="28" rx="6"/>
+<text x="104" y="668" class="pin" text-anchor="middle">PB6</text>
+<text x="166" y="668" class="label" text-anchor="start">D−</text>
+</g>
+<g class="usb"><rect x="60" y="687" width="88" height="28" rx="6"/>
+<text x="104" y="706" class="pin" text-anchor="middle">PB7</text>
+<text x="166" y="706" class="label" text-anchor="start">D+</text>
+</g>
+<rect x="560" y="640" width="480" height="143" rx="14" class="panel"/>
+<text x="582" y="672" class="eyebrow" text-anchor="start">POWER</text>
+<g class="power"><rect x="580" y="687" width="88" height="28" rx="6"/>
+<text x="624" y="706" class="pin" text-anchor="middle">3V3</text>
+<text x="686" y="706" class="label" text-anchor="start">3.3 V rail</text>
+</g>
+<g class="power"><rect x="580" y="725" width="88" height="28" rx="6"/>
+<text x="624" y="744" class="pin" text-anchor="middle">GND</text>
+<text x="686" y="744" class="label" text-anchor="start">Shared ground</text>
+</g>
+<text x="40" y="837" class="label" text-anchor="start">Use USBHS, not USBFS or the debugger port. WP# / HOLD# need external pull-ups.</text>
+<text x="40" y="873" class="subtitle" text-anchor="start">No header positions are implied. Verify board revision, pin access and wiring precautions.</text>
+</svg>

@@ -1,0 +1,342 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 940" role="img" aria-labelledby="title desc">
+<title id="title">Raspberry Pi Pico — DediBridge pinout</title>
+<desc id="desc">RP2040 · component side · USB at top · numbers are physical header pins. Functions are labeled in text and grouped by color. See the board guide for wiring precautions and a text pin table.</desc>
+<style>
+text { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; fill: #172b3a; }
+.paper { fill: #f8fafc; stroke: #d8e2eb; }
+.eyebrow { font-size: 13px; font-weight: 700; letter-spacing: 2px; fill: #527084; }
+.title { font-size: 32px; font-weight: 750; }
+.subtitle { font-size: 16px; fill: #526777; }
+.label { font-size: 15px; font-weight: 600; }
+.pin { font-family: ui-monospace, monospace; font-size: 14px; font-weight: 700; }
+.number { font-family: ui-monospace, monospace; font-size: 12px; fill: #526777; }
+.muted { fill: #647988; }
+.panel { fill: white; stroke: #d8e2eb; }
+.board { fill: #15584d; stroke: #0e4038; stroke-width: 2; }
+.board-text { fill: #f0fdf4; font-size: 15px; font-weight: 700; }
+.chip { fill: #213541; stroke: #8bb3ab; }
+.spi rect, .spi circle { fill: #dbeafe; stroke: #93b6df; }
+.spi text { fill: #17477b; }
+.uart rect, .uart circle { fill: #e0e7ff; stroke: #aaaee1; }
+.uart text { fill: #373b83; }
+.control rect, .control circle { fill: #fef3c7; stroke: #dfc77d; }
+.control text { fill: #72500c; }
+.led rect, .led circle { fill: #fce7f3; stroke: #dbadca; }
+.led text { fill: #833d67; }
+.power rect, .power circle { fill: #dcfce7; stroke: #91c4a1; }
+.power text { fill: #255d38; }
+.usb rect, .usb circle { fill: #cffafe; stroke: #83c7d0; }
+.usb text { fill: #165d68; }
+.idle rect, .idle circle { fill: #edf2f6; stroke: #d8e2eb; }
+.idle text { fill: #526777; }
+</style>
+<rect x="1" y="1" width="1078" height="938" rx="22" class="paper"/>
+<text x="40" y="42" class="eyebrow" text-anchor="start">DEDIBRIDGE / WIRING GUIDE</text>
+<text x="40" y="86" class="title" text-anchor="start">Raspberry Pi Pico</text>
+<text x="40" y="118" class="subtitle" text-anchor="start">RP2040 · component side · USB at top · numbers are physical header pins</text>
+<g class="spi"><rect x="40" y="145" width="14" height="14" rx="4"/></g>
+<text x="63" y="158" class="pin" text-anchor="start">SPI flash</text>
+<g class="uart"><rect x="210" y="145" width="14" height="14" rx="4"/></g>
+<text x="233" y="158" class="pin" text-anchor="start">UART</text>
+<g class="control"><rect x="345" y="145" width="14" height="14" rx="4"/></g>
+<text x="368" y="158" class="pin" text-anchor="start">Board control</text>
+<g class="led"><rect x="565" y="145" width="14" height="14" rx="4"/></g>
+<text x="588" y="158" class="pin" text-anchor="start">LEDs</text>
+<g class="power"><rect x="700" y="145" width="14" height="14" rx="4"/></g>
+<text x="723" y="158" class="pin" text-anchor="start">Power / GND</text>
+<g class="usb"><rect x="920" y="145" width="14" height="14" rx="4"/></g>
+<text x="943" y="158" class="pin" text-anchor="start">USB</text>
+<rect x="450" y="185" width="180" height="600" rx="18" class="board"/>
+<rect x="503" y="180" width="74" height="44" rx="5" fill="#d8e2eb" stroke="#526777"/>
+<text x="540" y="257" class="board-text" text-anchor="middle">USB</text>
+<rect x="483" y="420" width="114" height="114" rx="8" class="chip"/>
+<text x="540" y="485" class="board-text" text-anchor="middle">RP2040</text>
+<text x="540" y="340" class="board-text" text-anchor="middle">BOOTSEL</text>
+<circle cx="478" cy="240" r="6" fill="#fce7f3"/>
+<text x="540" y="285" class="board-text" text-anchor="middle">GP25</text>
+<text x="540" y="309" class="board-text" text-anchor="middle">Pass LED</text>
+<text x="540" y="742" class="board-text" text-anchor="middle">SWD pads</text>
+<g class="uart">
+<rect x="321" y="192" width="64" height="24" rx="6"/>
+<circle cx="416" cy="204" r="11"/>
+<text x="353" y="209" class="pin" text-anchor="middle">GP0</text>
+<text x="305" y="209" class="label" text-anchor="end">UART TX → target RX</text>
+</g>
+<text x="416" y="208" class="number" text-anchor="middle">1</text>
+<g class="power">
+<rect x="695" y="192" width="64" height="24" rx="6"/>
+<circle cx="664" cy="204" r="11"/>
+<text x="727" y="209" class="pin" text-anchor="middle">VBUS</text>
+<text x="786" y="209" class="label" text-anchor="start">USB 5 V · not flash VCC</text>
+</g>
+<text x="664" y="208" class="number" text-anchor="middle">40</text>
+<g class="uart">
+<rect x="321" y="221" width="64" height="24" rx="6"/>
+<circle cx="416" cy="233" r="11"/>
+<text x="353" y="238" class="pin" text-anchor="middle">GP1</text>
+<text x="305" y="238" class="label" text-anchor="end">UART RX ← target TX</text>
+</g>
+<text x="416" y="237" class="number" text-anchor="middle">2</text>
+<g class="power">
+<rect x="695" y="221" width="64" height="24" rx="6"/>
+<circle cx="664" cy="233" r="11"/>
+<text x="727" y="238" class="pin" text-anchor="middle">VSYS</text>
+<text x="786" y="238" class="label" text-anchor="start">Board supply input</text>
+</g>
+<text x="664" y="237" class="number" text-anchor="middle">39</text>
+<g class="power">
+<rect x="321" y="250" width="64" height="24" rx="6"/>
+<circle cx="416" cy="262" r="11"/>
+<text x="353" y="267" class="pin" text-anchor="middle">GND</text>
+<text x="305" y="267" class="label" text-anchor="end">Ground</text>
+</g>
+<text x="416" y="266" class="number" text-anchor="middle">3</text>
+<g class="power">
+<rect x="695" y="250" width="64" height="24" rx="6"/>
+<circle cx="664" cy="262" r="11"/>
+<text x="727" y="267" class="pin" text-anchor="middle">GND</text>
+<text x="786" y="267" class="label" text-anchor="start">Ground</text>
+</g>
+<text x="664" y="266" class="number" text-anchor="middle">38</text>
+<g class="spi">
+<rect x="321" y="279" width="64" height="24" rx="6"/>
+<circle cx="416" cy="291" r="11"/>
+<text x="353" y="296" class="pin" text-anchor="middle">GP2</text>
+<text x="305" y="296" class="label" text-anchor="end">Flash SCK</text>
+</g>
+<text x="416" y="295" class="number" text-anchor="middle">4</text>
+<g class="idle">
+<rect x="695" y="279" width="64" height="24" rx="6"/>
+<circle cx="664" cy="291" r="11"/>
+<text x="727" y="296" class="pin" text-anchor="middle">3V3_EN</text>
+<text x="786" y="296" class="label" text-anchor="start">Regulator enable</text>
+</g>
+<text x="664" y="295" class="number" text-anchor="middle">37</text>
+<g class="spi">
+<rect x="321" y="308" width="64" height="24" rx="6"/>
+<circle cx="416" cy="320" r="11"/>
+<text x="353" y="325" class="pin" text-anchor="middle">GP3</text>
+<text x="305" y="325" class="label" text-anchor="end">Flash IO0 / MOSI</text>
+</g>
+<text x="416" y="324" class="number" text-anchor="middle">5</text>
+<g class="power">
+<rect x="695" y="308" width="64" height="24" rx="6"/>
+<circle cx="664" cy="320" r="11"/>
+<text x="727" y="325" class="pin" text-anchor="middle">3V3</text>
+<text x="786" y="325" class="label" text-anchor="start">3.3 V output</text>
+</g>
+<text x="664" y="324" class="number" text-anchor="middle">36</text>
+<g class="spi">
+<rect x="321" y="337" width="64" height="24" rx="6"/>
+<circle cx="416" cy="349" r="11"/>
+<text x="353" y="354" class="pin" text-anchor="middle">GP4</text>
+<text x="305" y="354" class="label" text-anchor="end">Flash IO1 / MISO</text>
+</g>
+<text x="416" y="353" class="number" text-anchor="middle">6</text>
+<g class="idle">
+<rect x="695" y="337" width="64" height="24" rx="6"/>
+<circle cx="664" cy="349" r="11"/>
+<text x="727" y="354" class="pin" text-anchor="middle">ADC_VREF</text>
+<text x="786" y="354" class="label" text-anchor="start">Unused</text>
+</g>
+<text x="664" y="353" class="number" text-anchor="middle">35</text>
+<g class="spi">
+<rect x="321" y="366" width="64" height="24" rx="6"/>
+<circle cx="416" cy="378" r="11"/>
+<text x="353" y="383" class="pin" text-anchor="middle">GP5</text>
+<text x="305" y="383" class="label" text-anchor="end">Flash IO2 / WP#</text>
+</g>
+<text x="416" y="382" class="number" text-anchor="middle">7</text>
+<g class="idle">
+<rect x="695" y="366" width="64" height="24" rx="6"/>
+<circle cx="664" cy="378" r="11"/>
+<text x="727" y="383" class="pin" text-anchor="middle">GP28</text>
+<text x="786" y="383" class="label" text-anchor="start">Unused</text>
+</g>
+<text x="664" y="382" class="number" text-anchor="middle">34</text>
+<g class="power">
+<rect x="321" y="395" width="64" height="24" rx="6"/>
+<circle cx="416" cy="407" r="11"/>
+<text x="353" y="412" class="pin" text-anchor="middle">GND</text>
+<text x="305" y="412" class="label" text-anchor="end">Ground</text>
+</g>
+<text x="416" y="411" class="number" text-anchor="middle">8</text>
+<g class="power">
+<rect x="695" y="395" width="64" height="24" rx="6"/>
+<circle cx="664" cy="407" r="11"/>
+<text x="727" y="412" class="pin" text-anchor="middle">AGND</text>
+<text x="786" y="412" class="label" text-anchor="start">Analog ground</text>
+</g>
+<text x="664" y="411" class="number" text-anchor="middle">33</text>
+<g class="spi">
+<rect x="321" y="424" width="64" height="24" rx="6"/>
+<circle cx="416" cy="436" r="11"/>
+<text x="353" y="441" class="pin" text-anchor="middle">GP6</text>
+<text x="305" y="441" class="label" text-anchor="end">Flash IO3 / HOLD#</text>
+</g>
+<text x="416" y="440" class="number" text-anchor="middle">9</text>
+<g class="idle">
+<rect x="695" y="424" width="64" height="24" rx="6"/>
+<circle cx="664" cy="436" r="11"/>
+<text x="727" y="441" class="pin" text-anchor="middle">GP27</text>
+<text x="786" y="441" class="label" text-anchor="start">Unused</text>
+</g>
+<text x="664" y="440" class="number" text-anchor="middle">32</text>
+<g class="spi">
+<rect x="321" y="453" width="64" height="24" rx="6"/>
+<circle cx="416" cy="465" r="11"/>
+<text x="353" y="470" class="pin" text-anchor="middle">GP7</text>
+<text x="305" y="470" class="label" text-anchor="end">Flash CS#</text>
+</g>
+<text x="416" y="469" class="number" text-anchor="middle">10</text>
+<g class="idle">
+<rect x="695" y="453" width="64" height="24" rx="6"/>
+<circle cx="664" cy="465" r="11"/>
+<text x="727" y="470" class="pin" text-anchor="middle">GP26</text>
+<text x="786" y="470" class="label" text-anchor="start">Unused</text>
+</g>
+<text x="664" y="469" class="number" text-anchor="middle">31</text>
+<g class="control">
+<rect x="321" y="482" width="64" height="24" rx="6"/>
+<circle cx="416" cy="494" r="11"/>
+<text x="353" y="499" class="pin" text-anchor="middle">GP8</text>
+<text x="305" y="499" class="label" text-anchor="end">Target RESET#</text>
+</g>
+<text x="416" y="498" class="number" text-anchor="middle">11</text>
+<g class="idle">
+<rect x="695" y="482" width="64" height="24" rx="6"/>
+<circle cx="664" cy="494" r="11"/>
+<text x="727" y="499" class="pin" text-anchor="middle">RUN</text>
+<text x="786" y="499" class="label" text-anchor="start">Pico reset · not target</text>
+</g>
+<text x="664" y="498" class="number" text-anchor="middle">30</text>
+<g class="control">
+<rect x="321" y="511" width="64" height="24" rx="6"/>
+<circle cx="416" cy="523" r="11"/>
+<text x="353" y="528" class="pin" text-anchor="middle">GP9</text>
+<text x="305" y="528" class="label" text-anchor="end">Target POWER_SW#</text>
+</g>
+<text x="416" y="527" class="number" text-anchor="middle">12</text>
+<g class="idle">
+<rect x="695" y="511" width="64" height="24" rx="6"/>
+<circle cx="664" cy="523" r="11"/>
+<text x="727" y="528" class="pin" text-anchor="middle">GP22</text>
+<text x="786" y="528" class="label" text-anchor="start">Unused</text>
+</g>
+<text x="664" y="527" class="number" text-anchor="middle">29</text>
+<g class="power">
+<rect x="321" y="540" width="64" height="24" rx="6"/>
+<circle cx="416" cy="552" r="11"/>
+<text x="353" y="557" class="pin" text-anchor="middle">GND</text>
+<text x="305" y="557" class="label" text-anchor="end">Ground</text>
+</g>
+<text x="416" y="556" class="number" text-anchor="middle">13</text>
+<g class="power">
+<rect x="695" y="540" width="64" height="24" rx="6"/>
+<circle cx="664" cy="552" r="11"/>
+<text x="727" y="557" class="pin" text-anchor="middle">GND</text>
+<text x="786" y="557" class="label" text-anchor="start">Ground</text>
+</g>
+<text x="664" y="556" class="number" text-anchor="middle">28</text>
+<g class="control">
+<rect x="321" y="569" width="64" height="24" rx="6"/>
+<circle cx="416" cy="581" r="11"/>
+<text x="353" y="586" class="pin" text-anchor="middle">GP10</text>
+<text x="305" y="586" class="label" text-anchor="end">Power-state input</text>
+</g>
+<text x="416" y="585" class="number" text-anchor="middle">14</text>
+<g class="idle">
+<rect x="695" y="569" width="64" height="24" rx="6"/>
+<circle cx="664" cy="581" r="11"/>
+<text x="727" y="586" class="pin" text-anchor="middle">GP21</text>
+<text x="786" y="586" class="label" text-anchor="start">Unused</text>
+</g>
+<text x="664" y="585" class="number" text-anchor="middle">27</text>
+<g class="control">
+<rect x="321" y="598" width="64" height="24" rx="6"/>
+<circle cx="416" cy="610" r="11"/>
+<text x="353" y="615" class="pin" text-anchor="middle">GP11</text>
+<text x="305" y="615" class="label" text-anchor="end">Auxiliary-state input</text>
+</g>
+<text x="416" y="614" class="number" text-anchor="middle">15</text>
+<g class="idle">
+<rect x="695" y="598" width="64" height="24" rx="6"/>
+<circle cx="664" cy="610" r="11"/>
+<text x="727" y="615" class="pin" text-anchor="middle">GP20</text>
+<text x="786" y="615" class="label" text-anchor="start">Unused</text>
+</g>
+<text x="664" y="614" class="number" text-anchor="middle">26</text>
+<g class="idle">
+<rect x="321" y="627" width="64" height="24" rx="6"/>
+<circle cx="416" cy="639" r="11"/>
+<text x="353" y="644" class="pin" text-anchor="middle">GP12</text>
+<text x="305" y="644" class="label" text-anchor="end">Unused</text>
+</g>
+<text x="416" y="643" class="number" text-anchor="middle">16</text>
+<g class="idle">
+<rect x="695" y="627" width="64" height="24" rx="6"/>
+<circle cx="664" cy="639" r="11"/>
+<text x="727" y="644" class="pin" text-anchor="middle">GP19</text>
+<text x="786" y="644" class="label" text-anchor="start">Unused</text>
+</g>
+<text x="664" y="643" class="number" text-anchor="middle">25</text>
+<g class="idle">
+<rect x="321" y="656" width="64" height="24" rx="6"/>
+<circle cx="416" cy="668" r="11"/>
+<text x="353" y="673" class="pin" text-anchor="middle">GP13</text>
+<text x="305" y="673" class="label" text-anchor="end">Unused</text>
+</g>
+<text x="416" y="672" class="number" text-anchor="middle">17</text>
+<g class="idle">
+<rect x="695" y="656" width="64" height="24" rx="6"/>
+<circle cx="664" cy="668" r="11"/>
+<text x="727" y="673" class="pin" text-anchor="middle">GP18</text>
+<text x="786" y="673" class="label" text-anchor="start">Unused</text>
+</g>
+<text x="664" y="672" class="number" text-anchor="middle">24</text>
+<g class="power">
+<rect x="321" y="685" width="64" height="24" rx="6"/>
+<circle cx="416" cy="697" r="11"/>
+<text x="353" y="702" class="pin" text-anchor="middle">GND</text>
+<text x="305" y="702" class="label" text-anchor="end">Ground</text>
+</g>
+<text x="416" y="701" class="number" text-anchor="middle">18</text>
+<g class="power">
+<rect x="695" y="685" width="64" height="24" rx="6"/>
+<circle cx="664" cy="697" r="11"/>
+<text x="727" y="702" class="pin" text-anchor="middle">GND</text>
+<text x="786" y="702" class="label" text-anchor="start">Ground</text>
+</g>
+<text x="664" y="701" class="number" text-anchor="middle">23</text>
+<g class="led">
+<rect x="321" y="714" width="64" height="24" rx="6"/>
+<circle cx="416" cy="726" r="11"/>
+<text x="353" y="731" class="pin" text-anchor="middle">GP14</text>
+<text x="305" y="731" class="label" text-anchor="end">Busy LED</text>
+</g>
+<text x="416" y="730" class="number" text-anchor="middle">19</text>
+<g class="idle">
+<rect x="695" y="714" width="64" height="24" rx="6"/>
+<circle cx="664" cy="726" r="11"/>
+<text x="727" y="731" class="pin" text-anchor="middle">GP17</text>
+<text x="786" y="731" class="label" text-anchor="start">Unused</text>
+</g>
+<text x="664" y="730" class="number" text-anchor="middle">22</text>
+<g class="led">
+<rect x="321" y="743" width="64" height="24" rx="6"/>
+<circle cx="416" cy="755" r="11"/>
+<text x="353" y="760" class="pin" text-anchor="middle">GP15</text>
+<text x="305" y="760" class="label" text-anchor="end">Error LED</text>
+</g>
+<text x="416" y="759" class="number" text-anchor="middle">20</text>
+<g class="idle">
+<rect x="695" y="743" width="64" height="24" rx="6"/>
+<circle cx="664" cy="755" r="11"/>
+<text x="727" y="760" class="pin" text-anchor="middle">GP16</text>
+<text x="786" y="760" class="label" text-anchor="start">Unused</text>
+</g>
+<text x="664" y="759" class="number" text-anchor="middle">21</text>
+<text x="40" y="843" class="label" text-anchor="start">3.3 V I/O · no voltage switching · share ground</text>
+<text x="40" y="874" class="subtitle" text-anchor="start">For an already powered target, leave 3V3 disconnected. Read wiring precautions before connecting.</text>
+<text x="40" y="906" class="subtitle" text-anchor="start">SPI: blue · UART: violet · control: amber · LED: pink · unused pins: grey</text>
+</svg>
