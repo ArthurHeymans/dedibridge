@@ -141,7 +141,16 @@ fn default_socket() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(format!("/tmp/dedibridge-{}", unsafe { libc::geteuid() })))
         .join("dedibridge.sock")
 }
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> std::process::ExitCode {
+    match run() {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("error: {e}");
+            std::process::ExitCode::FAILURE
+        }
+    }
+}
+fn run() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
     let socket = cli.socket.unwrap_or_else(default_socket);
     let request = match cli.command {

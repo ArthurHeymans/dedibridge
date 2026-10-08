@@ -12,15 +12,30 @@ use std::{
     time::{Duration, Instant},
 };
 
+fn connect(path: &Path) -> io::Result<UnixStream> {
+    UnixStream::connect(path).map_err(|e| {
+        let hint = match e.kind() {
+            io::ErrorKind::NotFound | io::ErrorKind::ConnectionRefused => {
+                " (is `dedibridgectl daemon` running with the same --socket?)"
+            }
+            _ => "",
+        };
+        io::Error::new(
+            e.kind(),
+            format!("cannot connect to daemon at {}: {e}{hint}", path.display()),
+        )
+    })
+}
+
 pub fn control(path: &Path, request: Request) -> io::Result<Response> {
-    let mut socket = UnixStream::connect(path)?;
+    let mut socket = connect(path)?;
     socket.set_read_timeout(Some(Duration::from_secs(5)))?;
     socket.set_write_timeout(Some(Duration::from_secs(5)))?;
     wire::write(&mut socket, &request)?;
     wire::read::<Response>(&mut BufReader::new(socket))?.check()
 }
 pub fn open_serial(path: &Path, baud: u32) -> io::Result<(UnixStream, BufReader<UnixStream>)> {
-    let mut socket = UnixStream::connect(path)?;
+    let mut socket = connect(path)?;
     socket.set_read_timeout(Some(Duration::from_secs(5)))?;
     socket.set_write_timeout(Some(Duration::from_secs(5)))?;
     let mut reader = BufReader::new(socket.try_clone()?);
