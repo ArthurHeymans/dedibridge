@@ -38,8 +38,86 @@ pub trait Flash {
         data: &[u8],
         cancelled: impl Fn() -> bool,
     ) -> Result<(), Error>;
+    /// Program an even-sized, even-addressed SST AAI stream. Each bulk block
+    /// ends with WRDI, so a stalled USB producer never leaves AAI mode active.
+    async fn write_aai(
+        &mut self,
+        address: u32,
+        data: &[u8],
+        cancelled: impl Fn() -> bool,
+    ) -> Result<(), Error> {
+        if !address.is_multiple_of(2)
+            || !data.len().is_multiple_of(2)
+            || address > 0x100_0000
+            || data.len() > (0x100_0000 - address) as usize
+        {
+            return Err(Error::Unsupported);
+        }
+        if data.is_empty() {
+            return Ok(());
+        }
+        poll_aai_ready(self, &cancelled, true).await?;
+        let result = async {
+            if cancelled() {
+                return Err(Error::Cancelled);
+            }
+            self.transceive(&[0x06], &mut [])?;
+            for (i, word) in data.as_chunks::<2>().0.iter().enumerate() {
+                if cancelled() {
+                    return Err(Error::Cancelled);
+                }
+                if i == 0 {
+                    self.transceive(
+                        &[
+                            0xad,
+                            (address >> 16) as u8,
+                            (address >> 8) as u8,
+                            address as u8,
+                            word[0],
+                            word[1],
+                        ],
+                        &mut [],
+                    )?;
+                } else {
+                    self.transceive(&[0xad, word[0], word[1]], &mut [])?;
+                }
+                Timer::after_micros(10).await;
+                poll_aai_ready(self, &cancelled, true).await?;
+            }
+            Ok(())
+        }
+        .await;
+        // Even a failed SPI transfer may have entered AAI. Finish any word
+        // before WRDI; cancellation must not skip this bounded cleanup.
+        self.end_transfer();
+        let ready = poll_aai_ready(self, &cancelled, false).await;
+        let exit = self.transceive(&[0x04], &mut []);
+        result.and(ready).and(exit)
+    }
     fn end_transfer(&mut self) {
         self.select(false);
+    }
+}
+
+async fn poll_aai_ready<F: Flash + ?Sized>(
+    flash: &mut F,
+    cancelled: &impl Fn() -> bool,
+    check_cancel: bool,
+) -> Result<(), Error> {
+    let deadline = Instant::now() + Duration::from_millis(250);
+    loop {
+        if check_cancel && cancelled() {
+            return Err(Error::Cancelled);
+        }
+        let mut status = [0];
+        flash.transceive(&[0x05], &mut status)?;
+        if status[0] & 1 == 0 {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            return Err(Error::FlashBusyTimeout);
+        }
+        Timer::after_micros(10).await;
     }
 }
 
@@ -221,6 +299,10 @@ impl<S: SingleSpi> Flash for SingleFlash<S> {
         self.poll_wip(&cancelled).await
     }
 }
+
+#[cfg(test)]
+#[path = "aai_tests.rs"]
+mod aai_tests;
 
 #[cfg(test)]
 mod tests {

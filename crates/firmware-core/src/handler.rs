@@ -58,7 +58,12 @@ impl<'d, F: Flash, L: LedControl, R: Recovery> DediprogHandler<'d, F, L, R> {
         let Some(mode) = WriteMode::from_byte(raw_mode) else {
             return false;
         };
-        if matches!(mode, WriteMode::Aai2Byte) {
+        if matches!(mode, WriteMode::Aai2Byte)
+            && (!address.is_multiple_of(2)
+                || address > 0x100_0000
+                || u32::from(block_count) * 256 > 0x100_0000 - address
+                || !matches!(opcode, 0 | 0xad))
+        {
             return false;
         }
         self.shared.submit(BulkOperation::Write {
@@ -66,6 +71,7 @@ impl<'d, F: Flash, L: LedControl, R: Recovery> DediprogHandler<'d, F, L, R> {
             block_count,
             opcode: if opcode == 0 { 2 } else { opcode },
             addr_len: if mode.uses_4byte_addr() { 4 } else { 3 },
+            mode,
         })
     }
 }

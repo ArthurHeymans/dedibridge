@@ -24,10 +24,11 @@ cargo xtask build ch32v307
 cargo xtask build stm32f103
 ```
 
-Each command prints the firmware ELF path. `cargo xtask flash BOARD` builds and
-flashes with [probe-rs-tools](https://probe.rs/); it is the only task that operates
-on attached hardware. See the [Pico](boards/pico.md), [CH32V307](boards/ch32v307.md),
-and [Blue Pill](boards/blue-pill.md) guides for wiring and flashing.
+Each command prints the release firmware ELF path. `cargo xtask flash BOARD`
+builds and flashes release firmware with [probe-rs-tools](https://probe.rs/);
+it is the only task that operates on attached hardware. See the
+[Pico](boards/pico.md), [CH32V307](boards/ch32v307.md), and
+[Blue Pill](boards/blue-pill.md) guides for wiring and flashing.
 
 ## Firmware downloads
 

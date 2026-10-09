@@ -26,7 +26,7 @@ enum Task {
     },
     /// Build one board's release firmware.
     Build { board: Board },
-    /// Build and flash one board using probe-rs (requires connected hardware).
+    /// Build and flash one board's release firmware using probe-rs (requires connected hardware).
     Flash { board: Board },
     /// Build and report one board's ELF section sizes using llvm-size.
     Size { board: Board },

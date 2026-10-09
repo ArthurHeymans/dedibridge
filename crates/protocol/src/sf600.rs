@@ -234,6 +234,7 @@ pub enum BulkOperation {
         block_count: u16,
         opcode: u8,
         addr_len: u8,
+        mode: WriteMode,
     },
 }
 
