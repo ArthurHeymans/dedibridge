@@ -8,7 +8,9 @@ All boards share the USB request handler, bulk queue/cancellation logic,
 auxiliary protocol, UART batching/backpressure, and GPIO pulse service.
 CH32 and STM32 also share the single-lane flash engine. Unsupported multi-lane
 reads are rejected rather than silently performed as single-lane reads.
-AAI programming, not correctly implemented in the original projects, is rejected.
+SST word programming uses Dediprog bulk AAI mode: each 256-byte data block
+starts an addressed `0xAD` stream, polls WIP between words and ends with WRDI.
+Error and cancellation paths also attempt WRDI before releasing flash ownership.
 
 The `Flash`, `SingleSpi`, `UartRx/UartTx`, `Recovery`, and `BulkIn/BulkOut`
 boundaries express cancellation, bus release, physical TX completion, and

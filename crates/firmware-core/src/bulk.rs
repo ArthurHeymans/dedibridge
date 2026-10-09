@@ -277,6 +277,7 @@ impl<F: Flash, L: LedControl, R: Recovery> Shared<F, L, R> {
                         block_count,
                         opcode,
                         addr_len,
+                        mode,
                     } => {
                         if self.usb(generation, output.wait_enabled()).await.is_err() {
                             failed.store(true, Ordering::Relaxed);
@@ -313,17 +314,28 @@ impl<F: Flash, L: LedControl, R: Recovery> Shared<F, L, R> {
                                         break;
                                     }
                                     if !failed.load(Ordering::Relaxed) {
-                                        let result = flash
-                                            .write_page(
-                                                opcode,
-                                                address.wrapping_add(
-                                                    u32::from(page) * PAGE_SIZE as u32,
-                                                ),
-                                                addr_len,
-                                                &slot.bytes[..PAGE_SIZE],
-                                                || self.cancelled(generation),
-                                            )
-                                            .await;
+                                        let page_address = address
+                                            .wrapping_add(u32::from(page) * PAGE_SIZE as u32);
+                                        let data = &slot.bytes[..PAGE_SIZE];
+                                        let result =
+                                            if matches!(mode, crate::protocol::WriteMode::Aai2Byte)
+                                            {
+                                                flash
+                                                    .write_aai(page_address, data, || {
+                                                        self.cancelled(generation)
+                                                    })
+                                                    .await
+                                            } else {
+                                                flash
+                                                    .write_page(
+                                                        opcode,
+                                                        page_address,
+                                                        addr_len,
+                                                        data,
+                                                        || self.cancelled(generation),
+                                                    )
+                                                    .await
+                                            };
                                         if let Err(error) = ACTIVITY.flash_result(result) {
                                             keep_verify = error != Error::Cancelled;
                                             failed.store(true, Ordering::Relaxed);
@@ -376,6 +388,7 @@ mod tests {
             block_count: 1,
             opcode: 2,
             addr_len: 3,
+            mode: crate::protocol::WriteMode::PageProgram,
         }
     }
     #[test]
@@ -485,6 +498,44 @@ mod tests {
             length: 16,
         }
     }
+    #[test]
+    fn aai_setup_preserves_mode_and_refuses_invalid_streams() {
+        use embassy_usb::{Handler, control::OutResponse};
+        let identity = dedi_protocol::identity::DeviceIdentity::from_unique_id([0; 8]);
+        for (address, opcode, accepted) in [
+            (0x200u32, 0u8, true),
+            (0x200, 0xad, true),
+            (1, 0, false),
+            (0xffff80, 0, false),
+            (0x1000000, 0, false),
+            (0, 2, false),
+        ] {
+            let shared = Shared::<_, _, MockRecovery>::new(
+                MockFlash::<1>(Default::default()),
+                NoLeds::default(),
+            );
+            let mut handler = crate::handler::DediprogHandler::new(&shared, &identity);
+            let mut packet = [1, 0, 0, 4, opcode, 0, 0, 0, 0, 0];
+            packet[6..10].copy_from_slice(&address.to_le_bytes());
+            let response = handler.control_out(request(crate::protocol::CMD_WRITE, 0), &packet);
+            assert_eq!(matches!(response, Some(OutResponse::Accepted)), accepted);
+            critical_section::with(|cs| {
+                let queue = shared.queue.borrow(cs).borrow();
+                if accepted {
+                    assert!(matches!(
+                        queue.pending.as_ref().unwrap().operation,
+                        BulkOperation::Write {
+                            mode: crate::protocol::WriteMode::Aai2Byte,
+                            ..
+                        }
+                    ));
+                } else {
+                    assert!(queue.pending.is_none());
+                }
+            });
+        }
+    }
+
     #[test]
     fn qpi_dispatch_retains_experimental_reads_but_rejects_single_lane_boards() {
         use embassy_usb::{Handler, control::OutResponse};
@@ -615,7 +666,11 @@ mod tests {
             Arc,
             atomic::{AtomicUsize, Ordering},
         };
-        for read in [false, true] {
+        for (read, mode) in [
+            (false, crate::protocol::WriteMode::PageProgram),
+            (false, crate::protocol::WriteMode::Aai2Byte),
+            (true, crate::protocol::WriteMode::PageProgram),
+        ] {
             for fail in [false, true] {
                 let count = Arc::new(AtomicUsize::new(0));
                 let leds = NoLeds::default();
@@ -640,6 +695,7 @@ mod tests {
                         block_count: 3,
                         opcode: 2,
                         addr_len: 3,
+                        mode,
                     }
                 }));
                 block_on(async {
