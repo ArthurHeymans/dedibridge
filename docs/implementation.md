@@ -11,6 +11,9 @@ reads are rejected rather than silently performed as single-lane reads.
 SST word programming uses Dediprog bulk AAI mode: each 256-byte data block
 starts an addressed `0xAD` stream, polls WIP between words and ends with WRDI.
 Error and cancellation paths also attempt WRDI before releasing flash ownership.
+During bulk ownership, RDSR returns the last observed status with WIP set;
+once the worker releases SPI it returns the chip's live status again. Other
+control SPI commands remain rejected while bulk work owns the bus.
 
 The `Flash`, `SingleSpi`, `UartRx/UartTx`, `Recovery`, and `BulkIn/BulkOut`
 boundaries express cancellation, bus release, physical TX completion, and
