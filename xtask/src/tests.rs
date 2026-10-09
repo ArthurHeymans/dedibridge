@@ -109,6 +109,17 @@ fn host_arguments_are_forwarded_without_parsing_or_shell_expansion() {
 }
 
 #[test]
+fn firmware_commands_use_release_profile_for_every_board() {
+    let workspace = Workspace::load().unwrap();
+    for board in Board::ALL {
+        let command = workspace.board_cargo(board, "build");
+        let args: Vec<_> = command.get_args().collect();
+        assert!(args.contains(&std::ffi::OsStr::new("--release")));
+        assert!(args.contains(&std::ffi::OsStr::new(board.config().package)));
+    }
+}
+
+#[test]
 fn firmware_tasks_require_a_known_board_and_fmt_supports_check() {
     assert!(Cli::try_parse_from(["xtask", "flash"]).is_err());
     assert!(Cli::try_parse_from(["xtask", "build", "unknown"]).is_err());
