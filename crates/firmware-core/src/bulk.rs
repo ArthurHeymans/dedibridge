@@ -415,7 +415,10 @@ mod tests {
                 self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             }
         }
-        fn transceive(&mut self, _: &[u8], _: &mut [u8]) -> Result<(), Error> {
+        fn transceive(&mut self, command: &[u8], response: &mut [u8]) -> Result<(), Error> {
+            if command == [0x05] {
+                response.fill(0x3c);
+            }
             Ok(())
         }
         async fn start_read(
@@ -533,6 +536,47 @@ mod tests {
                     assert!(queue.pending.is_none());
                 }
             });
+        }
+    }
+
+    #[test]
+    fn status_reports_bulk_busy_without_releasing_spi_or_losing_protection_bits() {
+        use embassy_usb::{
+            Handler,
+            control::{InResponse, OutResponse},
+        };
+        let identity = dedi_protocol::identity::DeviceIdentity::from_unique_id([0; 8]);
+        let shared = Shared::<_, _, MockRecovery>::new(
+            MockFlash::<1>(Default::default()),
+            NoLeds::default(),
+        );
+        let mut handler = crate::handler::DediprogHandler::new(&shared, &identity);
+        let status = request(crate::protocol::CMD_TRANSCEIVE, 1);
+        let mut response = [0; 16];
+        for (busy, expected) in [(false, 0x3c), (true, 0x3d), (false, 0x3c)] {
+            if busy {
+                assert!(shared.submit(write()));
+            } else {
+                shared.cancel();
+            }
+            assert!(matches!(
+                handler.control_out(status, &[0x05]),
+                Some(OutResponse::Accepted)
+            ));
+            assert!(matches!(
+                handler.control_in(status, &mut response),
+                Some(InResponse::Accepted(data)) if data == [expected; 16]
+            ));
+            if busy {
+                assert!(matches!(
+                    handler.control_out(request(crate::protocol::CMD_TRANSCEIVE, 0), &[0x06]),
+                    Some(OutResponse::Rejected)
+                ));
+                assert!(matches!(
+                    handler.control_out(status, &[0x9f]),
+                    Some(OutResponse::Rejected)
+                ));
+            }
         }
     }
 

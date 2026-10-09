@@ -12,6 +12,7 @@ pub struct DediprogHandler<'d, F, L, R> {
     identity: &'d DeviceIdentity,
     response: [u8; 16],
     response_len: usize,
+    status: u8,
     io_mode: IoMode,
 }
 impl<'d, F: Flash, L: LedControl, R: Recovery> DediprogHandler<'d, F, L, R> {
@@ -21,6 +22,7 @@ impl<'d, F: Flash, L: LedControl, R: Recovery> DediprogHandler<'d, F, L, R> {
             identity,
             response: [0; 16],
             response_len: 0,
+            status: 0,
             io_mode: IoMode::Single,
         }
     }
@@ -86,6 +88,7 @@ impl<F: Flash, L: LedControl, R: Recovery> Handler for DediprogHandler<'_, F, L,
         self.shared.cancel();
         R::reset();
         self.response_len = 0;
+        self.status = 0;
         self.io_mode = IoMode::Single;
     }
     fn control_out(&mut self, req: Request, data: &[u8]) -> Option<OutResponse> {
@@ -102,11 +105,25 @@ impl<F: Flash, L: LedControl, R: Recovery> Handler for DediprogHandler<'_, F, L,
                     let result = self.shared.control(|flash| {
                         ACTIVITY.flash_result(flash.transceive(data, &mut self.response[..len]))
                     });
-                    if matches!(result, Some(Ok(()))) {
-                        self.response_len = len;
-                        true
-                    } else {
-                        false
+                    let status_read = data == [0x05] && len != 0;
+                    match result {
+                        Some(Ok(())) => {
+                            if status_read {
+                                self.status = self.response[0];
+                            }
+                            self.response_len = len;
+                            true
+                        }
+                        None if status_read => {
+                            // The bulk worker owns SPI until its stream is done.
+                            // Expose that busy state through WIP,
+                            // preserving the last status bits, without touching
+                            // the worker's SPI transaction.
+                            self.response.fill(self.status | 1);
+                            self.response_len = len;
+                            true
+                        }
+                        _ => false,
                     }
                 }
             }
