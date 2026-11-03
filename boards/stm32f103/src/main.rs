@@ -24,7 +24,6 @@ use embassy_stm32::{
     usb::{Driver, InterruptHandler},
 };
 use embassy_usb::Builder;
-use panic_probe as _;
 use static_cell::StaticCell;
 
 bind_interrupts!(struct Irqs {
@@ -153,4 +152,16 @@ async fn tx_task(tx: StmTx) {
 #[embassy_executor::task]
 async fn gpio_task(gpio: Gpio) {
     AUX.run_gpio(gpio).await;
+}
+
+/// panic-probe's message printing pulls in `core::fmt`, about 2 KiB this
+/// board's 64 KiB of flash no longer has room for. Report where it
+/// panicked and stop the core the same way.
+#[panic_handler]
+fn panic(info: &core::panic::PanicInfo) -> ! {
+    match info.location() {
+        Some(location) => defmt::error!("panic at {}:{}", location.file(), location.line()),
+        None => defmt::error!("panic"),
+    }
+    cortex_m::asm::udf()
 }

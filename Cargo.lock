@@ -601,7 +601,6 @@ dependencies = [
  "embassy-usb",
  "embedded-hal 1.0.0",
  "embedded-io-async 0.7.0",
- "panic-probe",
  "portable-atomic",
  "static_cell",
 ]
