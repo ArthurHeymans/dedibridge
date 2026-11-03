@@ -78,6 +78,12 @@ For each board:
 9. Apply the dutctl adapter and run real send/expect/monitor sequences, timeout,
    cancellation, serial-client exclusivity, and USB-disconnect scenarios.
 
+Pico UART startup regression: leave GP1 disconnected, reset/reconnect the Pico,
+then attach at 9600, 115200, and 1000000 baud. Each session must stay open and
+`rx_driver_errors` must remain zero. Check GP1's pull-up is enabled and its input
+is high. Also inject valid UART frames and a bad stop bit: valid bytes must reach
+the socket unchanged, while an actual framing error must still fail the session.
+
 F103-specific risks to verify: clone/pull-up differences, D+ startup reset,
 SPI2 pin mode transitions, DMA IRQ routing, final bulk-IN completion before
 endpoint cleanup, and recovery after a bus reset/deconfiguration. Test at the

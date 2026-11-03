@@ -110,13 +110,21 @@ async fn main(spawner: Spawner) {
         p.PIN_0,
         &tx_program,
     ));
-    let rx = PicoRx(PioUartRx::new(
+    let mut rx = PicoRx(PioUartRx::new(
         115200,
         &mut pio.common,
         pio.sm1,
         p.PIN_1,
         &rx_program,
     ));
+    // PioUartRx clears both pulls. An unwired/unpowered target must leave RX
+    // idle-high, not floating low and reporting a framing error on each attach.
+    embassy_rp::pac::PADS_BANK0.gpio(1).modify(|w| {
+        w.set_pue(true);
+        w.set_pde(false);
+    });
+    // Discard any partial frame sampled before the pull-up was configured.
+    dedi_core::aux::UartRx::flush_rx(&mut rx).await.unwrap();
     static CONFIG: StaticCell<[u8; 512]> = StaticCell::new();
     static BOS: StaticCell<[u8; 256]> = StaticCell::new();
     static MSOS: StaticCell<[u8; 256]> = StaticCell::new();

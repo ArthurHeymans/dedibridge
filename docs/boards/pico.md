@@ -29,7 +29,9 @@ installing a UF2.
 
 [Read the wiring precautions](../wiring.md). GP3–GP6 must stay consecutive for
 the PIO engine. GPIO control inputs have no pull-ups; external LEDs need series
-resistors. UART and board-control wiring is optional if you only need flash.
+resistors. UART RX (GP1) has an internal pull-up so a disconnected target leaves
+it idle-high instead of causing startup framing errors. UART and board-control
+wiring is optional if you only need flash.
 
 ## Install firmware
 
