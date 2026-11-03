@@ -60,10 +60,30 @@ impl Queue {
     }
 }
 
+/// Write-only SPI commands that arrived while a bulk stream still owned the
+/// bus. A host sends its next command once it has handed over the last
+/// block, which can be before the worker has programmed the last pages or
+/// released the bus: a write enable, then an erase or page program. The
+/// worker sends them, in that order, when the stream ends.
+#[derive(Clone, Copy)]
+struct Deferred {
+    write_enable: bool,
+    len: u8,
+    command: [u8; 16],
+}
+impl Deferred {
+    const NONE: Self = Self {
+        write_enable: false,
+        len: 0,
+        command: [0; 16],
+    };
+}
+
 pub struct Shared<F, L, R> {
     flash: Mutex<RefCell<Option<F>>>,
     leds: Mutex<RefCell<(L, u8)>>,
     queue: Mutex<RefCell<Queue>>,
+    deferred: Mutex<core::cell::Cell<Deferred>>,
     wake: Signal<CriticalSectionRawMutex, ()>,
     cancel: Signal<CriticalSectionRawMutex, ()>,
     generation: AtomicU32,
@@ -75,6 +95,7 @@ impl<F: Flash, L: LedControl, R: Recovery> Shared<F, L, R> {
             flash: Mutex::new(RefCell::new(Some(flash))),
             leds: Mutex::new(RefCell::new((leds, 0))),
             queue: Mutex::new(RefCell::new(Queue::default())),
+            deferred: Mutex::new(core::cell::Cell::new(Deferred::NONE)),
             wake: Signal::new(),
             cancel: Signal::new(),
             generation: AtomicU32::new(0),
@@ -95,6 +116,42 @@ impl<F: Flash, L: LedControl, R: Recovery> Shared<F, L, R> {
         let result = f(&mut flash);
         critical_section::with(|cs| *self.flash.borrow(cs).borrow_mut() = Some(flash));
         Some(result)
+    }
+    /// Queue a write-only `command` for after the bulk stream that owns the
+    /// bus. False if the bus is idle (send it now) or nothing more fits.
+    pub fn defer(&self, command: &[u8]) -> bool {
+        critical_section::with(|cs| {
+            let q = self.queue.borrow(cs).borrow();
+            let cell = self.deferred.borrow(cs);
+            let mut deferred = cell.get();
+            // Nothing may follow the command: it runs after a write enable.
+            if (!q.active && q.pending.is_none()) || deferred.len != 0 {
+                return false;
+            }
+            if command == [0x06] {
+                deferred.write_enable = true;
+            } else if let Some(slot) = deferred.command.get_mut(..command.len()) {
+                slot.copy_from_slice(command);
+                deferred.len = command.len() as u8;
+            } else {
+                return false;
+            }
+            cell.set(deferred);
+            true
+        })
+    }
+    /// Send what was deferred while the stream owned the bus.
+    #[inline(never)]
+    fn run_deferred(&self, flash: &mut F) {
+        let deferred =
+            critical_section::with(|cs| self.deferred.borrow(cs).replace(Deferred::NONE));
+        if deferred.write_enable {
+            let _ = ACTIVITY.flash_result(flash.transceive(&[0x06], &mut []));
+        }
+        if deferred.len != 0 {
+            let command = &deferred.command[..usize::from(deferred.len)];
+            let _ = ACTIVITY.flash_result(flash.transceive(command, &mut []));
+        }
     }
     pub fn set_leds(&self, mask: u8) {
         critical_section::with(|cs| {
@@ -130,7 +187,11 @@ impl<F: Flash, L: LedControl, R: Recovery> Shared<F, L, R> {
     pub fn cancel(&self) {
         ACTIVITY.cancellations.increment();
         let old = self.generation.fetch_add(1, Ordering::SeqCst);
-        critical_section::with(|cs| self.queue.borrow(cs).borrow_mut().discard(old, false));
+        critical_section::with(|cs| {
+            let mut q = self.queue.borrow(cs).borrow_mut();
+            q.discard(old, false);
+            self.deferred.borrow(cs).set(Deferred::NONE);
+        });
         // Release a manually selected bus too, but never touch an active DMA owner.
         self.control(|flash| flash.end_transfer());
         self.cancel.signal(());
@@ -353,7 +414,10 @@ impl<F: Flash, L: LedControl, R: Recovery> Shared<F, L, R> {
                     }
                 }
                 flash.end_transfer();
-                critical_section::with(|cs| *self.flash.borrow(cs).borrow_mut() = Some(flash));
+                // The USB handler shares this executor and nothing awaits
+                // from here until the stream ends, so nothing is deferred
+                // after this.
+                self.run_deferred(&mut flash);
                 if failed.load(Ordering::Relaxed) {
                     ACTIVITY.bulk_failed.increment();
                     R::prepare(is_read, true);
@@ -361,6 +425,7 @@ impl<F: Flash, L: LedControl, R: Recovery> Shared<F, L, R> {
                 } else {
                     ACTIVITY.bulk_completed.increment();
                 }
+                critical_section::with(|cs| *self.flash.borrow(cs).borrow_mut() = Some(flash));
                 critical_section::with(|cs| {
                     let mut q = self.queue.borrow(cs).borrow_mut();
                     if failed.load(Ordering::Relaxed) {
@@ -368,10 +433,17 @@ impl<F: Flash, L: LedControl, R: Recovery> Shared<F, L, R> {
                     }
                     q.active = false;
                     if let Some(pending) = q.pending.as_ref() {
-                        R::prepare(
-                            matches!(pending.operation, BulkOperation::Read { .. }),
-                            false,
-                        );
+                        // The host streams an OUT operation as soon as its
+                        // setup is accepted, so the next write's first packet
+                        // may already sit in the endpoint buffer, ACKed.
+                        // Resetting the endpoint now would drop it, and the
+                        // write would wait for a block that never comes.
+                        // After a clean finish nothing needs resetting: whole
+                        // blocks leave the data toggle at DATA0.
+                        let input = matches!(pending.operation, BulkOperation::Read { .. });
+                        if input || failed.load(Ordering::Relaxed) {
+                            R::prepare(input, false);
+                        }
                     }
                 });
             }
@@ -568,9 +640,10 @@ mod tests {
                 Some(InResponse::Accepted(data)) if data == [expected; 16]
             ));
             if busy {
+                // Write-only commands wait for the stream; reads cannot.
                 assert!(matches!(
                     handler.control_out(request(crate::protocol::CMD_TRANSCEIVE, 0), &[0x06]),
-                    Some(OutResponse::Rejected)
+                    Some(OutResponse::Accepted)
                 ));
                 assert!(matches!(
                     handler.control_out(status, &[0x9f]),
@@ -772,6 +845,206 @@ mod tests {
                 assert_eq!(leds.0.get(), if fail { 7 } else { 3 });
             }
         }
+    }
+    std::thread_local! {
+        static PREPARED: std::cell::RefCell<std::vec::Vec<(bool, bool)>> =
+            const { std::cell::RefCell::new(std::vec::Vec::new()) };
+    }
+    struct RecordingRecovery;
+    impl Recovery for RecordingRecovery {
+        type Guard = ();
+        fn packet_guard(_: embassy_usb::driver::EndpointAddress) {}
+        fn prepare(input: bool, stalled: bool) {
+            PREPARED.with(|p| p.borrow_mut().push((input, stalled)));
+        }
+    }
+    /// Submits `next` from inside the first block of the active write, as a
+    /// host does when it streams its next operation straight away.
+    struct Queues<'a> {
+        shared: &'a Shared<MockFlash<1>, NoLeds, RecordingRecovery>,
+        next: Option<BulkOperation>,
+    }
+    impl BulkOut for Queues<'_> {
+        async fn wait_enabled(&mut self) {}
+        async fn read_block(
+            &mut self,
+            bytes: &mut [u8; 512],
+        ) -> Result<(), embassy_usb::driver::EndpointError> {
+            if let Some(next) = self.next.take() {
+                assert!(self.shared.submit(next));
+            }
+            bytes.fill(0x42);
+            Ok(())
+        }
+    }
+    impl BulkIn for Queues<'_> {
+        async fn wait_enabled(&mut self) {}
+        async fn write_block(
+            &mut self,
+            _: &[u8; 512],
+        ) -> Result<(), embassy_usb::driver::EndpointError> {
+            Ok(())
+        }
+    }
+    #[test]
+    fn queued_write_keeps_the_out_endpoint_it_may_already_be_filling() {
+        use futures::executor::block_on;
+        let read = BulkOperation::Read {
+            address: 0,
+            block_count: 1,
+            opcode: 3,
+            addr_len: 3,
+            io_mode: crate::protocol::IoMode::Single,
+            mode_byte: None,
+            dummy_cycles: 0,
+        };
+        for (next, expected) in [
+            // A queued write must not lose packets the host already sent.
+            (write(), &[(false, false)][..]),
+            // A queued read still gets a fresh IN endpoint.
+            (read, &[(false, false), (true, false)][..]),
+        ] {
+            PREPARED.with(|p| p.borrow_mut().clear());
+            let shared = Shared::<_, _, RecordingRecovery>::new(
+                MockFlash::<1>(Default::default()),
+                NoLeds::default(),
+            );
+            assert!(shared.submit(write()));
+            block_on(async {
+                let output = Queues {
+                    shared: &shared,
+                    next: Some(next),
+                };
+                let input = Queues {
+                    shared: &shared,
+                    next: None,
+                };
+                let finished = async {
+                    loop {
+                        if shared.control(|_| ()).is_some() {
+                            break;
+                        }
+                        embassy_time::Timer::after_millis(1).await;
+                    }
+                };
+                assert!(matches!(
+                    embassy_time::with_timeout(
+                        Duration::from_secs(1),
+                        select(shared.run(input, output), finished)
+                    )
+                    .await,
+                    Ok(Either::Second(()))
+                ));
+            });
+            PREPARED.with(|p| assert_eq!(p.borrow().as_slice(), expected));
+        }
+    }
+    /// Records the SPI traffic: page programs and transceived commands.
+    #[derive(Clone, Default)]
+    struct Recorder(std::rc::Rc<std::cell::RefCell<std::vec::Vec<std::vec::Vec<u8>>>>);
+    impl Flash for Recorder {
+        const IO_MODES: u8 = 1;
+        fn set_frequency(&mut self, _: u32) -> Result<(), Error> {
+            Ok(())
+        }
+        fn select(&mut self, _: bool) {}
+        fn transceive(&mut self, command: &[u8], _: &mut [u8]) -> Result<(), Error> {
+            self.0.borrow_mut().push(command.to_vec());
+            Ok(())
+        }
+        async fn start_read(
+            &mut self,
+            _: u8,
+            _: u32,
+            _: u8,
+            _: crate::protocol::IoMode,
+            _: Option<u8>,
+            _: u8,
+            _: impl Fn() -> bool,
+        ) -> Result<(), Error> {
+            Ok(())
+        }
+        async fn read_block(
+            &mut self,
+            _: &mut [u8],
+            _: crate::protocol::IoMode,
+        ) -> Result<(), Error> {
+            Ok(())
+        }
+        async fn write_page(
+            &mut self,
+            opcode: u8,
+            _: u32,
+            _: u8,
+            _: &[u8],
+            _: impl Fn() -> bool,
+        ) -> Result<(), Error> {
+            self.0.borrow_mut().push(std::vec![opcode]);
+            Ok(())
+        }
+    }
+    /// Sends write-only commands while the stream still owns the bus, as a
+    /// host does once it has handed over the last block.
+    struct SendsDuring<'a> {
+        shared: &'a Shared<Recorder, NoLeds, MockRecovery>,
+    }
+    impl BulkOut for SendsDuring<'_> {
+        async fn wait_enabled(&mut self) {}
+        async fn read_block(
+            &mut self,
+            bytes: &mut [u8; 512],
+        ) -> Result<(), embassy_usb::driver::EndpointError> {
+            assert!(self.shared.defer(&[0x06]));
+            assert!(self.shared.defer(&[0x20, 0, 0x10, 0]));
+            bytes.fill(0x42);
+            Ok(())
+        }
+    }
+    impl BulkIn for SendsDuring<'_> {
+        async fn wait_enabled(&mut self) {}
+        async fn write_block(
+            &mut self,
+            _: &[u8; 512],
+        ) -> Result<(), embassy_usb::driver::EndpointError> {
+            Ok(())
+        }
+    }
+    #[test]
+    fn write_only_commands_during_a_stream_run_after_it_in_order() {
+        use futures::executor::block_on;
+        let recorder = Recorder::default();
+        let shared = Shared::<_, _, MockRecovery>::new(recorder.clone(), NoLeds::default());
+        assert!(shared.submit(write()));
+        block_on(async {
+            let finished = async {
+                loop {
+                    if shared.control(|_| ()).is_some() {
+                        break;
+                    }
+                    embassy_time::Timer::after_millis(1).await;
+                }
+            };
+            assert!(matches!(
+                embassy_time::with_timeout(
+                    Duration::from_secs(1),
+                    select(
+                        shared.run(
+                            SendsDuring { shared: &shared },
+                            SendsDuring { shared: &shared }
+                        ),
+                        finished
+                    )
+                )
+                .await,
+                Ok(Either::Second(()))
+            ));
+        });
+        assert_eq!(
+            *recorder.0.borrow(),
+            [std::vec![2], std::vec![0x06], std::vec![0x20, 0, 0x10, 0]]
+        );
+        // Idle again: nothing waits; commands run at once.
+        assert!(!shared.defer(&[0x04]));
     }
     #[test]
     fn blocking_control_keeps_exclusive_ownership_without_holding_a_borrow() {

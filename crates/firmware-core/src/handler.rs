@@ -123,6 +123,9 @@ impl<F: Flash, L: LedControl, R: Recovery> Handler for DediprogHandler<'_, F, L,
                             self.response_len = len;
                             true
                         }
+                        // A write-only command may arrive while a stream still
+                        // finishes; it runs in order once that ends.
+                        None if len == 0 => self.shared.defer(data),
                         _ => false,
                     }
                 }
