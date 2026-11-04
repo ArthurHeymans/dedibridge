@@ -55,7 +55,8 @@ jobs:
           if-no-files-found: error
 
   web:
-    runs-on: ubuntu-latest
+    # Match the OS supported by the pinned Playwright/browser release.
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: web
