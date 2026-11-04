@@ -1,8 +1,10 @@
 # Hardware acceptance checks
 
-These tests require real boards and a known SPI flash/DUT. They have **not**
-been run on the combined firmware. Do not confuse successful cross-linking or
-host mocks with hardware qualification.
+End-to-end firmware installation and programmer operation have been confirmed
+on Pico and CH32V307VCT6. The checklist below covers additional stress,
+fault-injection and board-specific acceptance checks; the end-to-end results do
+not imply that every listed case or OS/browser combination has been exercised.
+Blue Pill remains outside the supported release/installer targets.
 
 ## Software validation
 
@@ -24,7 +26,8 @@ Those checks model accounting policy, not the HAL's physical DMA writer.
 
 All three release ELFs link. Local artifact generation and actionlint pass;
 Pico UF2 blocks were checked for magic, RP2040 family, addresses, and ordering.
-GitHub-hosted CI/tag publishing itself has not been run. Release section totals:
+GitHub Actions checks firmware packaging and deploys the Pages installer;
+consult the matching workflow run for build results. Release section totals:
 
 | Target | Flash (`text + data`) | Static RAM (`data + bss`) |
 |---|---:|---:|

@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <meta
+      name="description"
+      content="Install DediBridge firmware on an original Raspberry Pi Pico or CH32V307VCT6 over USB."
+    />
+    <title>DediBridge · Firmware installer</title>
+    <link rel="stylesheet" href="./style.css" />
+    <script type="module" src="./app.js"></script>
+  </head>
+  <body>
+    <header class="shell masthead">
+      <a class="brand" href="https://github.com/ArthurHeymans/dedibridge"
+        ><span class="brand-mark" aria-hidden="true">D</span> DediBridge</a
+      >
+      <a class="text-link" href="https://github.com/ArthurHeymans/dedibridge"
+        >Source & documentation ↗</a
+      >
+    </header>
+    <main class="shell">
+      <section class="intro">
+        <h1>Install DediBridge firmware</h1>
+        <p class="lede">Raspberry Pi Pico and CH32V307VCT6 USB installer.</p>
+      </section>
+      <p id="unsupported" class="warning" hidden>
+        USB installation needs HTTPS and desktop Chrome or Edge with WebUSB. You
+        can still download firmware and follow the manual instructions.
+      </p>
+      <div class="workspace">
+        <section class="card" aria-labelledby="board-title">
+          <div class="section-heading">
+            <span class="step">01</span>
+            <h2 id="board-title">Choose your board</h2>
+          </div>
+          <fieldset id="board-controls" class="board-options">
+            <legend class="sr-only">Board model</legend>
+            <label class="board-option"
+              ><input type="radio" name="board" value="rp2040" checked /><span
+                ><strong>Raspberry Pi Pico</strong
+                ><small>Original Pico / Pico H · RP2040</small></span
+              ><span class="chip" aria-hidden="true">PICO</span></label
+            >
+            <label class="board-option"
+              ><input type="radio" name="board" value="ch32v307" /><span
+                ><strong>CH32V307 devboard</strong
+                ><small>CH32V307VCT6 · WCH USB ISP</small></span
+              ><span class="chip" aria-hidden="true">WCH</span></label
+            >
+          </fieldset>
+          <div class="divider"></div>
+          <div class="section-heading">
+            <span class="step">02</span>
+            <h2>Choose firmware</h2>
+          </div>
+          <p id="release" class="muted">Checking bundled firmware…</p>
+          <div class="button-row">
+            <button id="use-release" class="secondary" type="button" disabled>
+              Use bundled firmware</button
+            ><a id="download" class="text-link" hidden>Download image ↓</a>
+          </div>
+          <details class="local-file">
+            <summary>Or choose a local firmware image</summary>
+            <label for="file"
+              >Firmware file <span id="file-format">(.uf2)</span></label
+            ><input id="file" type="file" accept=".uf2" />
+            <p class="muted small">
+              Local files are structurally checked, not authenticated as
+              DediBridge releases. Only use firmware you trust.
+            </p>
+          </details>
+          <div id="image-info" class="image-info" hidden>
+            <strong id="image-name"></strong
+            ><span id="image-size" class="muted small"></span
+            ><code id="image-hash"></code>
+          </div>
+        </section>
+        <section class="card" aria-labelledby="install-title">
+          <div class="section-heading">
+            <span class="step">03</span>
+            <h2 id="install-title">Connect & install</h2>
+          </div>
+          <div id="pico-guide" class="boot-guide">
+            <h3>Start in BOOTSEL mode</h3>
+            <ol>
+              <li>Disconnect the board from any external target.</li>
+              <li>
+                Hold <strong>BOOTSEL</strong> while plugging the Pico into USB.
+              </li>
+              <li>Release BOOTSEL. Choose the RP2040 bootloader below.</li>
+            </ol>
+            <p class="small muted">
+              Pico W and Pico 2 are not supported. USB identification cannot
+              distinguish every RP2040 board: check your board model.
+            </p>
+          </div>
+          <div id="wch-guide" class="boot-guide" hidden>
+            <h3>Start in WCH ISP mode</h3>
+            <ol>
+              <li>
+                Disconnect any external target. Set
+                <strong>BOOT0 high, BOOT1 low</strong>, then reset/power-cycle.
+              </li>
+              <li>
+                Connect the ISP-capable USB port (USBHS on the reference board),
+                not WCH-Link.
+              </li>
+              <li>
+                After connecting below, restore
+                <strong>BOOT0 low without resetting</strong>, so installation
+                can reboot into the firmware.
+              </li>
+            </ol>
+            <p class="small muted">
+              Check your board's schematic and jumpers. Protected chips and
+              incompatible memory partitions are rejected; option bytes are
+              never changed.
+            </p>
+          </div>
+          <div class="connection">
+            <span
+              class="indicator"
+              id="device-indicator"
+              aria-hidden="true"
+            ></span
+            ><span id="device">Not connected</span>
+          </div>
+          <div class="button-row">
+            <button id="connect" class="secondary" type="button">
+              Connect bootloader</button
+            ><button id="disconnect" class="quiet" type="button" disabled>
+              Disconnect
+            </button>
+          </div>
+          <label class="confirmation"
+            ><input id="confirm" type="checkbox" /><span
+              >I checked the board model and image, disconnected external
+              targets, and understand that installation
+              <strong>erases this board's firmware</strong>.</span
+            ></label
+          >
+          <div class="button-row">
+            <button id="install" class="primary" type="button" disabled>
+              Install firmware <span aria-hidden="true">→</span></button
+            ><button id="stop" class="quiet" type="button" disabled>
+              Stop
+            </button>
+          </div>
+          <progress
+            id="progress"
+            max="100"
+            value="0"
+            aria-label="Installation progress"
+          ></progress>
+          <p id="status" role="status" aria-live="polite">
+            Choose firmware and connect your board to begin.
+          </p>
+          <details id="usb-permissions" class="permissions">
+            <summary>USB access & udev rules</summary>
+            <p>
+              <strong>Linux:</strong> browser device selection does not grant OS
+              access. The Pico bootloader is <code>2e8a:0003</code>; permissions
+              for the running DediBridge device (<code>0483:dada</code>) do not
+              cover BOOTSEL mode. WCH ISP also has separate bootloader IDs.
+            </p>
+            <p>
+              <a href="./70-dedibridge.rules" download
+                >Download 70-dedibridge.rules</a
+              >. These rules grant access to the active desktop user, not
+              everyone:
+            </p>
+            <pre><code><!-- udev-rules --></code></pre>
+            <p>
+              On other systemd Linux distributions, install the downloaded file:
+            </p>
+            <pre><code>sudo install -m 644 70-dedibridge.rules /etc/udev/rules.d/70-dedibridge.rules
+sudo udevadm control --reload-rules</code></pre>
+            <p>
+              <strong>NixOS:</strong> put the downloaded rules beside your Nix
+              module, add the following, then run
+              <code>sudo nixos-rebuild switch</code>. Do not edit the generated
+              <code>/etc/udev</code> files directly. Installing the file as
+              <code>70-*</code> ensures its tags are set before logind's
+              <code>73-seat-late.rules</code> applies access ACLs.
+            </p>
+            <pre><code>services.udev.packages = [
+  (pkgs.writeTextDir "etc/udev/rules.d/70-dedibridge.rules"
+    (builtins.readFile ./70-dedibridge.rules))
+];</code></pre>
+            <p>
+              <strong
+                >After applying the rules, unplug the board and replug it in
+                BOOTSEL/ISP mode, then click Connect bootloader again.</strong
+              >
+              Use a local desktop session; headless users need an explicit
+              device-access group. Do not run your browser as root.
+            </p>
+            <p>
+              <strong>Windows:</strong> use a WinUSB driver on the bootloader's
+              vendor interface, not the Pico's mass-storage interface. Browser
+              or enterprise USB policies can also block access. udev rules only
+              apply to Linux.
+            </p>
+          </details>
+          <details class="logs">
+            <summary>Transfer log</summary>
+            <pre id="log" aria-label="Transfer log"></pre>
+          </details>
+        </section>
+      </div>
+      <section class="fallback">
+        <div>
+          <h2>Prefer the manual route?</h2>
+          <p>
+            Pico: copy the UF2 to <code>RPI-RP2</code> in BOOTSEL mode.<br />CH32:
+            use <code>wchisp flash dedi-ch32v307.bin</code> in ISP mode.
+          </p>
+        </div>
+        <a
+          class="text-link"
+          id="board-docs"
+          href="https://github.com/ArthurHeymans/dedibridge/blob/main/docs/boards/pico.md"
+          >Board guide & USB permissions ↗</a
+        >
+      </section>
+    </main>
+    <footer class="shell">
+      <p>
+        Runs locally in your browser. Firmware is sent to your board, never
+        uploaded to a server.
+      </p>
+      <p>
+        <a href="./licenses/GPL-2.0.txt">Installer: GPL-2.0</a> ·
+        <a href="./sources/README.md">Source & third-party licenses</a> ·
+        <a href="https://github.com/ArthurHeymans/dedibridge/releases"
+          >All releases ↗</a
+        >
+      </p>
+    </footer>
+  </body>
+</html>

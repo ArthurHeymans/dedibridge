@@ -36,7 +36,7 @@ enum Task {
     Test,
     /// Check formatting, host and firmware Clippy, and all firmware builds.
     Check,
-    /// Build all firmware and package three ELFs and the Pico UF2.
+    /// Package Pico and CH32V307 release ELFs, the Pico UF2 and the CH32 ISP binary.
     Artifacts,
     /// Run dedibridgectl, forwarding all remaining arguments unchanged.
     Host {
@@ -62,6 +62,7 @@ struct BoardConfig {
 
 impl Board {
     const ALL: [Self; 3] = [Self::Rp2040, Self::Stm32f103, Self::Ch32v307];
+    const RELEASE: [Self; 2] = [Self::Rp2040, Self::Ch32v307];
 
     fn config(self) -> BoardConfig {
         match self {
@@ -212,7 +213,7 @@ impl Workspace {
     fn artifacts(&self) -> Result<()> {
         let output = self.root().join("artifacts");
         fs::create_dir_all(&output).context("could not create artifacts directory")?;
-        for board in Board::ALL {
+        for board in Board::RELEASE {
             let elf = self.build(board)?;
             let destination = output.join(format!("{}.elf", board.config().package));
             fs::copy(&elf, &destination).with_context(|| {
@@ -226,7 +227,14 @@ impl Workspace {
         run(self
             .command("elf2uf2-rs")
             .arg(output.join("dedi-rp2040.elf"))
-            .arg(output.join("dedi-rp2040.uf2")))
+            .arg(output.join("dedi-rp2040.uf2")))?;
+        // Use load addresses, including the RAM .data initializer in flash.
+        // Do not dump just .text or the ELF's virtual-address range.
+        run(self
+            .command("llvm-objcopy")
+            .args(["-O", "binary"])
+            .arg(output.join("dedi-ch32v307.elf"))
+            .arg(output.join("dedi-ch32v307.bin")))
     }
 
     fn execute(&self, task: Task) -> Result<()> {

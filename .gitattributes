@@ -1,0 +1,2 @@
+# Preserve upstream sources byte-for-byte; local style checks exclude vendors.
+/web/vendor/** linguist-vendored=true -whitespace

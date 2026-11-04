@@ -18,6 +18,14 @@ Successor to [DediPico](https://github.com/ArthurHeymans/dedipico) and
 
 ## Use it
 
+Download Pico UF2 or CH32V307 ISP BIN images from
+[Releases](https://github.com/ArthurHeymans/dedibridge/releases) or the
+`dedibridge-firmware` [CI artifact](https://github.com/ArthurHeymans/dedibridge/actions).
+Install either board directly from the
+[browser installer](https://arthurheymans.github.io/dedibridge/).
+USB installation and programmer operation have been tested end to end on Pico
+and CH32V307VCT6. See [installer documentation](docs/web-flasher.md).
+
 Flash your board using its guide above, then:
 
 ```sh
@@ -30,7 +38,8 @@ flashprog -p dediprog -w image.bin
 competing power supplies or drive a flash bus still owned by the target.
 See [wiring precautions](docs/wiring.md) before connecting anything.
 
-Combined firmware still needs [hardware validation](docs/hardware-validation.md).
+See [hardware validation](docs/hardware-validation.md) for additional stress,
+fault-injection and board-specific checks.
 
 - [UART, board control & USB permissions](docs/usage.md)
 - [Build from source & development](docs/building.md)

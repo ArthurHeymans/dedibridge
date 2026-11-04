@@ -9,8 +9,15 @@ The RP2040 PIO flash engine, PIO programs, and direct-register bulk-IN fast path
 are derived from `dedipico/src/`. The auxiliary wire protocol, identity, and
 SF600 parsing originated in that project too. CH32 pin muxing and packet cleanup
 are derived from `dedich32/src/`. Those imported sources are used under MIT.
-New code is available under MIT OR Apache-2.0; source-specific MIT terms remain
-applicable to inherited code. Both license texts are included.
+New firmware/host code is available under MIT OR Apache-2.0; source-specific MIT
+terms remain applicable to inherited code. Both license texts are included.
+
+The separate browser installer under `web/` is GPL-2.0-only (`web/LICENSE`).
+It uses the GPL-2.0-only `ArthurHeymans/wchisp-web` fork and vendors Piers
+Finlayson's MIT-licensed PICOBOOT library in `web/vendor/picoflash/`, retaining
+its license and attribution. Web builds include corresponding installer/WCH
+source and build inputs plus third-party licenses. These browser-app terms do
+not relicense the independently built firmware images.
 
 `integrations/dutctl/serial.patch` modifies the BSD-style-licensed dutctl serial
 module and preserves its original Blindspot Software notice. The new Go adapter

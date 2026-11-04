@@ -35,6 +35,12 @@ wiring is optional if you only need flash.
 
 ## Install firmware
 
+The [browser installer](https://arthurheymans.github.io/dedibridge/) supports USB
+installation in desktop Chrome/Edge after holding BOOTSEL while plugging in.
+Installation and programmer operation have been tested end to end. See the
+[installer documentation](../web-flasher.md). Manual UF2 installation is also
+available in any browser:
+
 1. Download `dedi-rp2040.uf2` from a [release](https://github.com/ArthurHeymans/dedibridge/releases)
    or the `dedibridge-firmware` [CI artifact](https://github.com/ArthurHeymans/dedibridge/actions).
 2. Hold **BOOTSEL** while plugging in the USB cable.

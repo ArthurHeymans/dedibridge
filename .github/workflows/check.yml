@@ -1,3 +1,5 @@
+# Full action commit pins intentionally exceed 80 columns.
+# yamllint disable rule:line-length
 name: Check
 
 on:
@@ -12,8 +14,10 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: integrations/dutctl/go.mod
           cache: false
@@ -28,29 +32,123 @@ jobs:
         run: cargo xtask test
       - name: Formatting, Clippy and all firmware targets
         run: cargo xtask check
-      - name: Package board firmware
+      - name: Package release firmware (Pico and CH32V307)
         run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y llvm
           cargo install elf2uf2-rs --version 2.2.0 \
             --no-default-features --locked
           cargo xtask artifacts
-      - uses: actions/upload-artifact@v7
+          cd artifacts
+          sha256sum dedi-rp2040.elf dedi-rp2040.uf2 \
+            dedi-ch32v307.elf dedi-ch32v307.bin > SHA256SUMS
+          sha256sum --check SHA256SUMS
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: dedibridge-firmware
-          path: artifacts/*
+          path: |
+            artifacts/dedi-rp2040.elf
+            artifacts/dedi-rp2040.uf2
+            artifacts/dedi-ch32v307.elf
+            artifacts/dedi-ch32v307.bin
+            artifacts/SHA256SUMS
+          if-no-files-found: error
+
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npm run format:check
+      - run: npm test
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:browser
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: dedibridge-web
+          path: web/dist
+          include-hidden-files: true
           if-no-files-found: error
 
   release:
     if: startsWith(github.ref, 'refs/tags/')
-    needs: check
+    needs: [check, web]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: dedibridge-firmware
           path: artifacts
-      - uses: softprops/action-gh-release@v3
+      - name: Verify downloaded firmware
+        working-directory: artifacts
+        run: sha256sum --check SHA256SUMS
+      - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
         with:
-          files: artifacts/*
+          files: |
+            artifacts/dedi-rp2040.elf
+            artifacts/dedi-rp2040.uf2
+            artifacts/dedi-ch32v307.elf
+            artifacts/dedi-ch32v307.bin
+            artifacts/SHA256SUMS
           fail_on_unmatched_files: true
+
+  pages-build:
+    if: >-
+      github.event_name != 'pull_request' &&
+      (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) ||
+       startsWith(github.ref, 'refs/tags/'))
+    needs: [check, web]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: dedibridge-web
+          path: site
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: dedibridge-firmware
+          path: artifacts
+      - name: Bundle the exact verified firmware images
+        env:
+          FIRMWARE_REF: ${{ github.ref_name }}
+          FIRMWARE_COMMIT: ${{ github.sha }}
+        run: |
+          node site/sources/installer/scripts/firmware.mjs \
+            --input artifacts --output site/firmware \
+            --tag "$FIRMWARE_REF" --commit "$FIRMWARE_COMMIT"
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5
+        with:
+          path: site
+
+  pages-deploy:
+    needs: pages-build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    concurrency:
+      group: github-pages
+      cancel-in-progress: false
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy firmware installer
+        id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5

@@ -4,8 +4,32 @@
 
 ## USB permissions
 
-Install `udev/70-dedibridge.rules` for desktop `uaccess` permissions. On headless
-NixOS, give the daemon's account access through a group instead:
+`udev/70-dedibridge.rules` grants the active desktop user access to the runtime
+(`0483:dada`), Pico BOOTSEL (`2e8a:0003`) and WCH ISP (`4348:55e0` / `1a86:55e0`)
+USB devices. Selecting a device in the browser does not grant these OS permissions.
+On systemd Linux, install it from the repository root:
+
+```sh
+sudo install -m 644 udev/70-dedibridge.rules /etc/udev/rules.d/70-dedibridge.rules
+sudo udevadm control --reload-rules
+```
+
+Unplug/replug the board in the desired mode afterwards, then reconnect in the
+browser. Keep the `70-` filename: `uaccess` tags must be present before
+`73-seat-late.rules` applies the active user's ACL. Do not run the browser as root.
+
+On NixOS, install the rules declaratively (place the downloaded file beside the
+Nix module), then run `sudo nixos-rebuild switch` and replug:
+
+```nix
+services.udev.packages = [
+  (pkgs.writeTextDir "etc/udev/rules.d/70-dedibridge.rules"
+    (builtins.readFile ./70-dedibridge.rules))
+];
+```
+
+On headless NixOS, give the daemon's account access through a group instead
+(the following example covers the runtime device only):
 
 ```nix
 users.groups.dedibridge = {};

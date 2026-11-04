@@ -120,6 +120,19 @@ fn firmware_commands_use_release_profile_for_every_board() {
 }
 
 #[test]
+fn release_bundle_targets_pico_and_ch32_but_checks_still_cover_blue_pill() {
+    assert_eq!(
+        Board::RELEASE.map(|board| board.config().package),
+        ["dedi-rp2040", "dedi-ch32v307"]
+    );
+    assert!(
+        Board::ALL
+            .iter()
+            .any(|board| matches!(board, Board::Stm32f103))
+    );
+}
+
+#[test]
 fn firmware_tasks_require_a_known_board_and_fmt_supports_check() {
     assert!(Cli::try_parse_from(["xtask", "flash"]).is_err());
     assert!(Cli::try_parse_from(["xtask", "build", "unknown"]).is_err());

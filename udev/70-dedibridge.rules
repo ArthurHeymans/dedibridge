@@ -1,2 +1,9 @@
-# Desktop logind sessions: grant the active user access to both USB interfaces.
-SUBSYSTEM=="usb", ATTR{idVendor}=="0483", ATTR{idProduct}=="dada", TAG+="uaccess"
+# Desktop logind sessions: grant the active user read/write USB access.
+# Keep this file before 73-seat-late.rules so uaccess ACLs are applied.
+# DediBridge runtime: flash and auxiliary interfaces.
+SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="0483", ATTR{idProduct}=="dada", TAG+="uaccess"
+# Original Pico / Pico H ROM bootloader (BOOTSEL, not Pico 2 or Debugprobe).
+SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="2e8a", ATTR{idProduct}=="0003", TAG+="uaccess"
+# WCH USB ISP bootloader identities, not WCH-Link or CH340 serial adapters.
+SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="4348", ATTR{idProduct}=="55e0", TAG+="uaccess"
+SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="1a86", ATTR{idProduct}=="55e0", TAG+="uaccess"
