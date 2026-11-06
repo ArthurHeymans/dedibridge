@@ -78,11 +78,10 @@ impl<'d, F: Flash, L: LedControl, R: Recovery> DediprogHandler<'d, F, L, R> {
     }
 }
 impl<F: Flash, L: LedControl, R: Recovery> Handler for DediprogHandler<'_, F, L, R> {
-    fn configured(&mut self, configured: bool) {
-        if !configured {
-            self.shared.cancel();
-            R::reset();
-        }
+    fn configured(&mut self, _: bool) {
+        // SET_CONFIGURATION also resets endpoints when selecting the same
+        // configuration again, not just when deconfiguring the device.
+        self.reset();
     }
     fn reset(&mut self) {
         self.shared.cancel();
@@ -90,6 +89,14 @@ impl<F: Flash, L: LedControl, R: Recovery> Handler for DediprogHandler<'_, F, L,
         self.response_len = 0;
         self.status = 0;
         self.io_mode = IoMode::Single;
+    }
+    fn set_alternate_setting(&mut self, interface: embassy_usb::types::InterfaceNumber, _: u8) {
+        // Releasing a claimed interface can issue SET_INTERFACE(0), resetting
+        // the endpoint PIDs even without a USB bus reset or deconfiguration.
+        // Interface 1 belongs to UART/GPIO and must not cancel SPI traffic.
+        if u8::from(interface) == dedi_protocol::SPI_INTERFACE {
+            self.reset();
+        }
     }
     fn control_out(&mut self, req: Request, data: &[u8]) -> Option<OutResponse> {
         if req.request_type != RequestType::Vendor {

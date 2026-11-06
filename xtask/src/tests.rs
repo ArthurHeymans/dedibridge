@@ -1,6 +1,10 @@
 use super::*;
 use serde_json::json;
 
+// Exercise the board-owned DPRAM store on the host without linking the MCU HAL.
+#[path = "../../boards/rp2040/src/usb_buffer_control.rs"]
+mod pico_usb_buffer_control;
+
 fn artifact(package: &str, binary: &str, executable: Option<&str>, test: bool) -> String {
     json!({
         "reason": "compiler-artifact",

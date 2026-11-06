@@ -11,4 +11,5 @@ cargo_metadata = "0.23"
 clap = { version = "4", features = ["derive"] }
 
 [dev-dependencies]
+rp-pac = { version = "7", features = ["rp2040"] }
 serde_json = "1"

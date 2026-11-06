@@ -24,6 +24,11 @@ pub trait Recovery {
     async fn write_complete(_endpoint: EndpointAddress) -> Result<(), EndpointError> {
         Ok(())
     }
+    /// False when a failed stream requires an explicit host pipe reset.
+    /// Refuse new setup packets rather than guessing the host's DATA toggle.
+    fn can_submit(_input: bool) -> bool {
+        true
+    }
     fn prepare(input: bool, stalled: bool);
     fn reset() {}
 }

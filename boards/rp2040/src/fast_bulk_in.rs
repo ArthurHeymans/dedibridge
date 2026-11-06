@@ -5,7 +5,11 @@ use embassy_rp::pac;
 use embassy_usb::driver::EndpointError;
 use portable_atomic::{AtomicBool, Ordering};
 
-use crate::config::{BULK_BLOCK_SIZE, USB_MAX_PACKET_SIZE};
+use crate::{
+    config::{BULK_BLOCK_SIZE, USB_MAX_PACKET_SIZE},
+    usb_abort::{AbortGuard, USB_EPOCH},
+    usb_buffer_control::{packet_control, write_halfword},
+};
 
 static FALLBACK_WARNED: AtomicBool = AtomicBool::new(false);
 
@@ -19,6 +23,8 @@ pub struct FastBulkIn {
     buffer0_addr: usize,
     next_buf: usize,
     next_pid: bool,
+    reset_pending: bool,
+    epoch: u32,
 }
 
 impl FastBulkIn {
@@ -31,6 +37,9 @@ impl FastBulkIn {
     pub fn new_ep2() -> Option<Self> {
         let dpram = pac::USB_DPRAM;
         let control = dpram.ep_in_control(Self::EP_CONTROL_INDEX).read();
+        if !control.enable() || dpram.ep_in_buffer_control(Self::EP_INDEX).read().stall() {
+            return None;
+        }
         let buffer0_addr = usize::from(control.buffer_address());
         let reserve_addr = usize::from(
             dpram
@@ -59,9 +68,11 @@ impl FastBulkIn {
         Some(Self {
             buffer0_addr,
             next_buf: 0,
-            // Matches Embassy's first-packet behavior after endpoint enable: it
-            // stores `pid = !current_pid`, where current_pid starts true.
+            // DediProg transfers contain whole 512-byte blocks. Successful
+            // transfers return to DATA0; a reopened host pipe starts there too.
             next_pid: false,
+            reset_pending: true,
+            epoch: USB_EPOCH.load(Ordering::SeqCst),
         })
     }
 
@@ -74,14 +85,13 @@ impl FastBulkIn {
         let buf_index = self.next_buf;
 
         loop {
-            if !dpram.ep_in_control(Self::EP_CONTROL_INDEX).read().enable() {
+            if self.epoch != USB_EPOCH.load(Ordering::SeqCst)
+                || !dpram.ep_in_control(Self::EP_CONTROL_INDEX).read().enable()
+            {
                 return Err(EndpointError::Disabled);
             }
-            if !dpram
-                .ep_in_buffer_control(Self::EP_INDEX)
-                .read()
-                .available(buf_index)
-            {
+            let control = dpram.ep_in_buffer_control(Self::EP_INDEX).read();
+            if !control.available(buf_index) && !control.full(buf_index) {
                 break;
             }
             embassy_futures::yield_now().await;
@@ -100,23 +110,38 @@ impl FastBulkIn {
         dst.copy_from_slice(packet);
         compiler_fence(Ordering::SeqCst);
 
-        if !dpram.ep_in_control(Self::EP_CONTROL_INDEX).read().enable() {
+        if self.epoch != USB_EPOCH.load(Ordering::SeqCst)
+            || !dpram.ep_in_control(Self::EP_CONTROL_INDEX).read().enable()
+        {
             return Err(EndpointError::Disabled);
         }
 
-        dpram.ep_in_buffer_control(Self::EP_INDEX).modify(|w| {
-            w.set_length(buf_index, packet.len() as u16);
-            w.set_pid(buf_index, self.next_pid);
-            w.set_full(buf_index, true);
-        });
+        // Both banks have the same length/PID/FULL/AVAILABLE layout. Build a
+        // fresh low-half value, then store it only into our released bank.
+        // Never RMW the shared word: hardware may complete the other bank.
+        // RESET must accompany the first AVAILABLE buffer. A reset-only write
+        // with both banks unavailable is not enough: clearing it before AVAIL
+        // can leave hardware selecting bank 1 after an abandoned transfer.
+        let staged = packet_control(
+            packet.len() as u16,
+            self.next_pid,
+            self.reset_pending,
+            false,
+        );
+        let published =
+            packet_control(packet.len() as u16, self.next_pid, self.reset_pending, true);
+        let register = dpram
+            .ep_in_buffer_control(Self::EP_INDEX)
+            .as_ptr()
+            .cast::<u32>();
+        // SAFETY: AVAILABLE is clear for this bank, checked above. The
+        // adjacent bank may still be owned by the USB controller.
+        unsafe { write_halfword(register, buf_index, staged) };
         cortex_m::asm::delay(12);
-        dpram.ep_in_buffer_control(Self::EP_INDEX).modify(|w| {
-            w.set_length(buf_index, packet.len() as u16);
-            w.set_pid(buf_index, self.next_pid);
-            w.set_full(buf_index, true);
-            w.set_available(buf_index, true);
-        });
+        // SAFETY: publish the same owned half after the required 12 cycles.
+        unsafe { write_halfword(register, buf_index, published) };
 
+        self.reset_pending = false;
         self.next_pid = !self.next_pid;
         self.next_buf ^= 1;
         Ok(())
@@ -132,6 +157,14 @@ impl FastBulkIn {
 
 impl Drop for FastBulkIn {
     fn drop(&mut self) {
+        // SET_INTERFACE/reset has already initialized a new endpoint epoch.
+        // Old-stream cleanup must not rewrite its PID or discard new packets.
+        if self.epoch != USB_EPOCH.load(Ordering::SeqCst) {
+            return;
+        }
+        let Some(_abort) = AbortGuard::new(true, Self::EP_INDEX) else {
+            return;
+        };
         let dpram = pac::USB_DPRAM;
         dpram.ep_in_control(Self::EP_CONTROL_INDEX).modify(|w| {
             w.set_interrupt_per_buff(true);

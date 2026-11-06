@@ -1,5 +1,7 @@
 use crate::wire::Info;
-use dedi_protocol::{AUX_IN, AUX_INTERFACE, AUX_OUT, USB_PID, USB_VID, aux::*};
+use dedi_protocol::{
+    AUX_IN, AUX_INTERFACE, AUX_OUT, SPI_IN, SPI_INTERFACE, SPI_OUT, USB_PID, USB_VID, aux::*,
+};
 use nusb::{
     Endpoint, MaybeFuture,
     transfer::{Bulk, In, Out},
@@ -58,19 +60,46 @@ pub fn devices() -> io::Result<Vec<nusb::DeviceInfo>> {
         .filter(|d| d.vendor_id() == USB_VID && d.product_id() == USB_PID)
         .collect())
 }
+fn selected_device(serial: Option<&str>) -> io::Result<nusb::DeviceInfo> {
+    let mut devices = devices()?
+        .into_iter()
+        .filter(|d| serial.is_none_or(|s| d.serial_number() == Some(s)))
+        .collect::<Vec<_>>();
+    if devices.len() != 1 {
+        return Err(io::Error::other(format!(
+            "matched {} devices; select exactly one with --serial (use `list`)",
+            devices.len()
+        )));
+    }
+    Ok(devices.pop().unwrap())
+}
+
+/// Reset both host and device SPI endpoint toggles after an uncertain transfer.
+/// Claiming interface 0 refuses to interfere with an active programmer. The
+/// independent auxiliary interface, UART leases and GPIO pulses are untouched.
+pub fn recover_spi(serial: &str) -> io::Result<()> {
+    let device = selected_device(Some(serial))?
+        .open()
+        .wait()
+        .map_err(usb_error)?;
+    let interface = device
+        .claim_interface(SPI_INTERFACE)
+        .wait()
+        .map_err(usb_error)?;
+    interface.set_alt_setting(0).wait().map_err(usb_error)?;
+    // Also reset the host controller's pipe toggles. SET_INTERFACE alone may
+    // be optimized for a one-alternate-setting interface by the OS.
+    let mut input = interface.endpoint::<Bulk, In>(SPI_IN).map_err(usb_error)?;
+    let mut output = interface
+        .endpoint::<Bulk, Out>(SPI_OUT)
+        .map_err(usb_error)?;
+    input.clear_halt().wait().map_err(usb_error)?;
+    output.clear_halt().wait().map_err(usb_error)
+}
+
 impl Device {
     pub fn open(serial: Option<&str>) -> io::Result<(Self, String)> {
-        let devices = devices()?
-            .into_iter()
-            .filter(|d| serial.is_none_or(|s| d.serial_number() == Some(s)))
-            .collect::<Vec<_>>();
-        if devices.len() != 1 {
-            return Err(io::Error::other(format!(
-                "matched {} devices; select exactly one with --serial (use `list`)",
-                devices.len()
-            )));
-        }
-        let info = &devices[0];
+        let info = selected_device(serial)?;
         let serial = info
             .serial_number()
             .ok_or_else(|| io::Error::other("device has no stable USB serial"))?

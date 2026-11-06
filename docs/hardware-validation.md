@@ -8,7 +8,7 @@ Blue Pill remains outside the supported release/installer targets.
 
 ## Software validation
 
-Local validation passes 45 Rust tests, host/core/protocol and all three firmware
+Local validation passes 68 Rust tests, host/core/protocol and all three firmware
 Clippy targets with warnings denied, Go race tests, and the patched dutctl
 serial-module/configuration tests. Focused tests cover QPI dispatch, abandoned
 IN/OUT session cancellation (including maximum-size IN), erase-window retention,
@@ -29,18 +29,53 @@ Pico UF2 blocks were checked for magic, RP2040 family, addresses, and ordering.
 GitHub Actions checks firmware packaging and deploys the Pages installer;
 consult the matching workflow run for build results. Release section totals:
 
-| Target | Flash (`text + data`) | Static RAM (`data + bss`) |
+| Target | Flash (`text + data`) | Allocated RAM sections |
 |---|---:|---:|
-| RP2040 | 68,728 B | 7,556 B |
-| CH32V307 | 52,036 B | 16,264 B |
-| STM32F103C8 | 63,996 B | 8,780 B |
+| RP2040 | 71,632 B | 9,276 B |
+| CH32V307 | 53,870 B | 16,296 B |
+| STM32F103C8 | 65,352 B | 8,760 B |
 
-Small linker alignment gaps are excluded. Static RAM includes task storage and
-RTT buffers, but not peak interrupt/runtime stack use. F103 leaves only about
-1.5 KiB flash (before alignment) and 11.4 KiB RAM before runtime stack use; USB
-PMA is separate. Further firmware features need explicit size checks. The retained
+Small linker alignment gaps are excluded. RAM totals sum `.data`, `.bss` and
+`.uninit`, including task storage, RTT buffers and Pico RAM-resident code (which
+LLVM classifies as `text`), but not peak interrupt/runtime stack use. F103 leaves
+less than 200 B flash before alignment and about 11.4 KiB RAM before runtime
+stack use; USB PMA is separate. Further firmware features need explicit size checks. The retained
 PIO dependency emits a third-party `proc-macro-error2` future-compatibility
 warning; it does not currently fail the build.
+
+## Pico EP2 regression qualification (2026-11-06)
+
+Local source builds were tested with an SWD-attached Pico and an 8 MiB Winbond
+flash on a MinnowBoard MAX. This is not a published installer release.
+
+Two reproduced USB bugs are fixed: full-word buffer-control RMW could replay a
+hardware-owned bank, and clearing selector RESET before the first AVAILABLE
+store could start a recovered transfer from bank 1, swapping 64-byte packets.
+Cleanup now aborts the endpoint before reclaiming buffers; old USB epochs cannot
+consume or reset a new epoch's data. Interrupted pipes fail closed until explicit
+[host recovery](usage.md#recover-an-interrupted-spi-transfer).
+
+The final ELF passed:
+
+- Exact full-chip reads at 3, 12 and 24 MHz, plus a forced single-buffer
+  fallback read and a successful fast-path read after restoring the reservation.
+- Six killed bulk-IN readers: unrecovered reads were refused, explicit recovery
+  released CS and produced exact full-chip data without resetting the MCU.
+  Recovery also refused to interfere with a still-running programmer.
+- Three distinct 64 KiB BIOS-padding write/verify/readback cycles at 24 MHz,
+  followed by original-image restoration and two exact full-chip readbacks.
+  Descriptor/TXE regions were not programmed.
+- Three original-firmware Linux boots, each retaining its auxiliary UART lease
+  across SPI-interface recovery. SWD confirmed idle SPI output enables released.
+
+A separate MinnowBoard power-transition issue remains unresolved: the first read
+soon after a power-button shutdown can return zeros partway through its first
+transfer. SWD observed MISO low while reading an erased region. An additional
+10-second idle interval produced good control reads, but is not proof of power
+state or exclusive flash ownership. Physical isolation/voltage measurements are
+still needed; these tests do not establish an electrical cause or qualify all
+power-transition cases. QPI, four-byte addressing, killed OUT transfers and the
+broader UART stress matrix below were not qualified by these tests.
 
 ## Physical checks
 

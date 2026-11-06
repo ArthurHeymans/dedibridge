@@ -67,6 +67,22 @@ protocol V3). Its serial and flashprog EEPROM selection ID come from the board's
 unique ID. **Voltage commands do not switch power.** Read the
 [wiring precautions](wiring.md) first.
 
+### Recover an interrupted SPI transfer
+
+Pico keeps a failed SPI USB pipe halted rather than guessing the host's DATA
+toggle and returning shifted data. Stop the programmer, then explicitly recover
+both pipes before starting a fresh operation:
+
+```sh
+cargo xtask host recover-spi --serial YOUR_USB_SERIAL
+```
+
+No daemon is needed. Recovery claims interface 0 exclusively (and refuses if a
+programmer still owns it), cancels old SPI work and resets the device and host
+pipe state. It does not reset the MCU, touch GPIO/power, or replay flash writes;
+interface 1 and its UART lease stay independent. An interrupted write remains
+uncertain: read back the flash before deciding what to program next.
+
 ## Start the host daemon
 
 ```sh
@@ -76,9 +92,11 @@ cargo xtask host --socket /run/user/1000/board-a.sock daemon --serial YOUR_USB_S
 
 Replace the socket path with one in your own runtime directory. For multiple
 boards, select each USB serial explicitly and use a separate socket per daemon.
-The daemon claims **interface 1 only**; flashprog uses interface 0 and can run
-at the same time. Run clients and the daemon as the same account: the socket is
-owner-only. Host tooling requires Linux/Unix (PTYs, Unix sockets, `nusb`).
+The daemon claims **interface 1 only**; SPI clients use interface 0. Clients
+that retain the active USB configuration can run concurrently. Stop the daemon
+before using a flashprog build that calls `SET_CONFIGURATION`: that operation
+conflicts with claimed interfaces and resets both interfaces, not just SPI.
+Run clients and the daemon as the same account: the socket is owner-only. Host tooling requires Linux/Unix (PTYs, Unix sockets, `nusb`).
 
 ## Console and control
 
@@ -104,6 +122,12 @@ and `pulse power 500`. Pin names are `reset`, `power`, `power-state`, and `aux`;
 the last two are input-only. Numeric `direction MASK VALUES`,
 `output MASK VALUES`, and `pulse MASK MS` are also supported. `set` combines the
 original direction-then-output sequence in one daemon actor operation.
+
+A pulse ACK means the pulse **started**, not that it finished or that the target
+is off. Wait for release before issuing another pulse. A long power-button hold
+can start an already-off target; it is not an idempotent off command. Confirm
+that the target and any standby flash master have released SPI before programming.
+Idle Hi-Z pins and an expired button pulse do not establish bus ownership.
 
 `diagnostics` (or `diag`) reads lifetime UART/USB/flash counters, uptime, and
 firmware version without resetting counters. Zero counters are not evidence
