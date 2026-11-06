@@ -170,6 +170,9 @@ impl<F: Flash, L: LedControl, R: Recovery> Shared<F, L, R> {
     }
     pub fn submit(&self, operation: BulkOperation) -> bool {
         let input = matches!(operation, BulkOperation::Read { .. });
+        if !R::can_submit(input) {
+            return false;
+        }
         let accepted = critical_section::with(|cs| {
             let mut queue = self.queue.borrow(cs).borrow_mut();
             let idle = !queue.active;
@@ -206,11 +209,14 @@ impl<F: Flash, L: LedControl, R: Recovery> Shared<F, L, R> {
         }
         match with_timeout(
             Duration::from_millis(3500),
-            select(future, self.cancel.wait()),
+            // Do not poll an old packet future after reset has installed new
+            // endpoint buffers. Even a discarded result could consume a new
+            // OUT packet or acknowledge its completion in the old epoch.
+            select(self.cancel.wait(), future),
         )
         .await
         {
-            Ok(Either::First(result)) if !self.cancelled(generation) => Ok(result),
+            Ok(Either::Second(result)) if !self.cancelled(generation) => Ok(result),
             Err(_) => {
                 ACTIVITY.bulk_usb_timeouts.increment();
                 Err(())
@@ -245,9 +251,9 @@ impl<F: Flash, L: LedControl, R: Recovery> Shared<F, L, R> {
                 }; 2];
                 let mut channel = Channel::<CriticalSectionRawMutex, Block>::new(&mut buffers);
                 let (mut sender, mut receiver) = channel.split();
-                let failed = AtomicBool::new(self.cancelled(generation));
-                let mut keep_verify = false;
                 let is_read = matches!(operation, BulkOperation::Read { .. });
+                let failed = AtomicBool::new(self.cancelled(generation) || !R::can_submit(is_read));
+                let mut keep_verify = false;
                 match operation {
                     BulkOperation::Read {
                         address,
@@ -259,7 +265,7 @@ impl<F: Flash, L: LedControl, R: Recovery> Shared<F, L, R> {
                         dummy_cycles,
                     } => {
                         let enabled = self.usb(generation, input.wait_enabled()).await;
-                        let started = if enabled.is_ok() {
+                        let started = if enabled.is_ok() && !failed.load(Ordering::Relaxed) {
                             ACTIVITY.flash_result(
                                 flash
                                     .start_read(
@@ -420,7 +426,11 @@ impl<F: Flash, L: LedControl, R: Recovery> Shared<F, L, R> {
                 self.run_deferred(&mut flash);
                 if failed.load(Ordering::Relaxed) {
                     ACTIVITY.bulk_failed.increment();
-                    R::prepare(is_read, true);
+                    // A USB/interface reset has already installed a fresh
+                    // endpoint epoch. Never stall or reclaim its new buffers.
+                    if !self.cancelled(generation) {
+                        R::prepare(is_read, true);
+                    }
                     self.set_error();
                 } else {
                     ACTIVITY.bulk_completed.increment();
@@ -441,7 +451,8 @@ impl<F: Flash, L: LedControl, R: Recovery> Shared<F, L, R> {
                         // After a clean finish nothing needs resetting: whole
                         // blocks leave the data toggle at DATA0.
                         let input = matches!(pending.operation, BulkOperation::Read { .. });
-                        if input || failed.load(Ordering::Relaxed) {
+                        if input || (failed.load(Ordering::Relaxed) && !self.cancelled(generation))
+                        {
                             R::prepare(input, false);
                         }
                     }
@@ -573,6 +584,186 @@ mod tests {
             length: 16,
         }
     }
+    #[test]
+    fn resetting_spi_interface_cancels_old_streams_but_auxiliary_does_not() {
+        use embassy_usb::{Handler, types::InterfaceNumber};
+        let identity = dedi_protocol::identity::DeviceIdentity::from_unique_id([0; 8]);
+        let shared = Shared::<_, _, MockRecovery>::new(
+            MockFlash::<1>(Default::default()),
+            NoLeds::default(),
+        );
+        let mut handler = crate::handler::DediprogHandler::new(&shared, &identity);
+        assert!(shared.submit(write()));
+        handler.set_alternate_setting(InterfaceNumber(1), 0);
+        assert_eq!(shared.generation.load(Ordering::SeqCst), 0);
+        assert!(critical_section::with(|cs| shared
+            .queue
+            .borrow(cs)
+            .borrow()
+            .pending
+            .is_some()));
+        handler.set_alternate_setting(InterfaceNumber(0), 0);
+        assert_eq!(shared.generation.load(Ordering::SeqCst), 1);
+        assert!(critical_section::with(|cs| shared
+            .queue
+            .borrow(cs)
+            .borrow()
+            .pending
+            .is_none()));
+        // Even reselecting the same alternate setting resets endpoint PIDs.
+        handler.set_alternate_setting(InterfaceNumber(0), 0);
+        assert_eq!(shared.generation.load(Ordering::SeqCst), 2);
+        handler.configured(true);
+        assert_eq!(shared.generation.load(Ordering::SeqCst), 3);
+        handler.configured(true);
+        assert_eq!(shared.generation.load(Ordering::SeqCst), 4);
+    }
+
+    #[test]
+    fn cancellation_wins_before_polling_a_ready_old_packet_future() {
+        use core::{
+            future::Future,
+            task::{Context, Poll},
+        };
+        let shared = Shared::<_, _, MockRecovery>::new(
+            MockFlash::<1>(Default::default()),
+            NoLeds::default(),
+        );
+        let polls = std::cell::Cell::new(0);
+        let ready = std::cell::Cell::new(false);
+        let packet = core::future::poll_fn(|_| {
+            polls.set(polls.get() + 1);
+            if ready.get() {
+                Poll::Ready(())
+            } else {
+                Poll::Pending
+            }
+        });
+        let mut transfer = core::pin::pin!(shared.usb(0, packet));
+        let waker = futures::task::noop_waker();
+        let mut context = Context::from_waker(&waker);
+        assert!(transfer.as_mut().poll(&mut context).is_pending());
+        shared.cancel();
+        ready.set(true);
+        assert!(matches!(
+            transfer.as_mut().poll(&mut context),
+            Poll::Ready(Err(()))
+        ));
+        assert_eq!(
+            polls.get(),
+            1,
+            "old future must not touch new endpoint data"
+        );
+    }
+
+    #[test]
+    fn recovery_can_refuse_a_new_stream_until_the_host_resets_the_pipe() {
+        struct RejectRead;
+        impl Recovery for RejectRead {
+            type Guard = ();
+            fn packet_guard(_: embassy_usb::driver::EndpointAddress) {}
+            fn prepare(_: bool, _: bool) {}
+            fn can_submit(input: bool) -> bool {
+                !input
+            }
+        }
+        let shared =
+            Shared::<_, _, RejectRead>::new(MockFlash::<1>(Default::default()), NoLeds::default());
+        assert!(!shared.submit(BulkOperation::Read {
+            address: 0,
+            block_count: 1,
+            opcode: 3,
+            addr_len: 3,
+            io_mode: crate::protocol::IoMode::Single,
+            mode_byte: None,
+            dummy_cycles: 0,
+        }));
+        assert!(critical_section::with(|cs| shared
+            .queue
+            .borrow(cs)
+            .borrow()
+            .pending
+            .is_none()));
+        assert!(shared.submit(write()));
+    }
+
+    #[test]
+    fn stale_stream_cleanup_does_not_stall_or_reset_a_new_epochs_out_buffer() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static STALLS: AtomicUsize = AtomicUsize::new(0);
+        static OUT_RESETS: AtomicUsize = AtomicUsize::new(0);
+        struct EpochRecovery;
+        impl Recovery for EpochRecovery {
+            type Guard = ();
+            fn packet_guard(_: embassy_usb::driver::EndpointAddress) {}
+            fn prepare(input: bool, stalled: bool) {
+                if stalled {
+                    STALLS.fetch_add(1, Ordering::SeqCst);
+                }
+                if !input {
+                    OUT_RESETS.fetch_add(1, Ordering::SeqCst);
+                }
+            }
+        }
+        type TestShared = Shared<MockFlash, NoLeds, EpochRecovery>;
+        struct CancelIn<'a>(&'a TestShared);
+        impl BulkIn for CancelIn<'_> {
+            async fn wait_enabled(&mut self) {}
+            async fn write_block(
+                &mut self,
+                _: &[u8; 512],
+            ) -> Result<(), embassy_usb::driver::EndpointError> {
+                self.0.cancel();
+                assert!(self.0.submit(write()));
+                Err(embassy_usb::driver::EndpointError::Disabled)
+            }
+        }
+        struct WaitingOut<'a>(&'a std::cell::Cell<bool>);
+        impl BulkOut for WaitingOut<'_> {
+            async fn wait_enabled(&mut self) {
+                self.0.set(true);
+                core::future::pending::<()>().await;
+            }
+            async fn read_block(
+                &mut self,
+                _: &mut [u8; 512],
+            ) -> Result<(), embassy_usb::driver::EndpointError> {
+                panic!("new epoch must still be waiting")
+            }
+        }
+        let shared = TestShared::new(MockFlash::<1>(Default::default()), NoLeds::default());
+        assert!(shared.submit(BulkOperation::Read {
+            address: 0,
+            block_count: 1,
+            opcode: 3,
+            addr_len: 3,
+            io_mode: crate::protocol::IoMode::Single,
+            mode_byte: None,
+            dummy_cycles: 0,
+        }));
+        let new_epoch = std::cell::Cell::new(false);
+        futures::executor::block_on(async {
+            let observed = async {
+                while !new_epoch.get() {
+                    embassy_time::Timer::after_millis(1).await;
+                }
+            };
+            assert!(matches!(
+                embassy_time::with_timeout(
+                    Duration::from_secs(1),
+                    select(
+                        shared.run(CancelIn(&shared), WaitingOut(&new_epoch)),
+                        observed
+                    )
+                )
+                .await,
+                Ok(Either::Second(()))
+            ));
+        });
+        assert_eq!(STALLS.load(Ordering::SeqCst), 0);
+        assert_eq!(OUT_RESETS.load(Ordering::SeqCst), 0);
+    }
+
     #[test]
     fn aai_setup_preserves_mode_and_refuses_invalid_streams() {
         use embassy_usb::{Handler, control::OutResponse};

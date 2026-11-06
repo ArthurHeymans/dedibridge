@@ -4,6 +4,8 @@ mod backend;
 mod fast_bulk_in;
 mod spi_flash;
 mod spi_flash_programs;
+mod usb_abort;
+mod usb_buffer_control;
 mod config {
     pub use dedi_core::config::*;
     pub const USB_MAX_PACKET_SIZE: u16 = 64;

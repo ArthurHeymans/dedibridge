@@ -2,6 +2,7 @@ use crate::{
     UsbDriver,
     fast_bulk_in::FastBulkIn,
     spi_flash::{SpiError, SpiFlash},
+    usb_abort::AbortGuard,
 };
 use dedi_core::{
     flash::{Error, Flash},
@@ -97,7 +98,33 @@ pub struct PicoRecovery;
 impl Recovery for PicoRecovery {
     type Guard = ();
     fn packet_guard(_: embassy_usb::driver::EndpointAddress) {}
+    fn reset() {
+        crate::usb_abort::reset();
+    }
+    fn can_submit(input: bool) -> bool {
+        let ram = pac::USB_DPRAM;
+        let (enabled, stalled) = if input {
+            (
+                ram.ep_in_control(1).read().enable(),
+                ram.ep_in_buffer_control(2).read().stall(),
+            )
+        } else {
+            (
+                ram.ep_out_control(0).read().enable(),
+                ram.ep_out_buffer_control(1).read().stall(),
+            )
+        };
+        enabled && !stalled
+    }
     fn prepare(input: bool, stalled: bool) {
+        // Only CLEAR_FEATURE(HALT), SET_INTERFACE or a USB reset may recover
+        // an interrupted pipe: the firmware cannot infer the host's next PID.
+        if !stalled && !Self::can_submit(input) {
+            return;
+        }
+        let Some(_abort) = AbortGuard::new(input, if input { 2 } else { 1 }) else {
+            return;
+        };
         let ram = pac::USB_DPRAM;
         if input {
             ram.ep_in_control(1).modify(|w| {
@@ -152,6 +179,9 @@ impl BulkIn for PicoIn {
         self.fast = FastBulkIn::new_ep2();
     }
     async fn write_block(&mut self, data: &[u8; 512]) -> Result<(), EndpointError> {
+        if !PicoRecovery::can_submit(true) {
+            return Err(EndpointError::Disabled);
+        }
         if let Some(fast) = &mut self.fast {
             fast.write_block(data).await
         } else {
@@ -162,17 +192,20 @@ impl BulkIn for PicoIn {
         }
     }
     async fn flush(&mut self) -> Result<(), EndpointError> {
-        if self.fast.is_some() {
-            loop {
-                if !pac::USB_DPRAM.ep_in_control(1).read().enable() {
-                    return Err(EndpointError::Disabled);
-                }
-                let control = pac::USB_DPRAM.ep_in_buffer_control(2).read();
-                if !control.available(0) && !control.available(1) {
-                    break;
-                }
-                embassy_futures::yield_now().await;
+        loop {
+            if !pac::USB_DPRAM.ep_in_control(1).read().enable() {
+                return Err(EndpointError::Disabled);
             }
+            let control = pac::USB_DPRAM.ep_in_buffer_control(2).read();
+            // The single-buffer fallback also queues its last packet before
+            // write() returns. Drain bank 0 even when the fast path is absent.
+            if !control.available(0)
+                && !control.full(0)
+                && (self.fast.is_none() || (!control.available(1) && !control.full(1)))
+            {
+                break;
+            }
+            embassy_futures::yield_now().await;
         }
         Ok(())
     }

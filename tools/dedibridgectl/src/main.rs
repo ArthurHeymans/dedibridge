@@ -18,6 +18,11 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     List,
+    /// Cancel SPI work and resynchronize its USB pipes without resetting the MCU.
+    RecoverSpi {
+        #[arg(long)]
+        serial: String,
+    },
     Daemon {
         #[arg(long)]
         serial: Option<String>,
@@ -165,6 +170,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
             return Ok(());
         }
+        Command::RecoverSpi { serial } => {
+            device::recover_spi(&serial)?;
+            println!("SPI interface reset; outstanding SPI operations cancelled");
+            return Ok(());
+        }
         Command::Daemon { serial } => {
             let (device, serial) = device::Device::open(serial.as_deref())?;
             let reconnect_serial = serial.clone();
@@ -205,6 +215,16 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn spi_recovery_requires_an_explicit_device_identity() {
+        assert!(Cli::try_parse_from(["dedibridgectl", "recover-spi"]).is_err());
+        let cli =
+            Cli::try_parse_from(["dedibridgectl", "recover-spi", "--serial", "target-serial"])
+                .unwrap();
+        assert!(matches!(cli.command, Command::RecoverSpi { serial } if serial == "target-serial"));
+    }
+
     #[test]
     fn original_named_gpio_commands_and_numeric_masks_translate() {
         for (args, expected) in [
