@@ -21,6 +21,8 @@ use fixed::traits::ToFixed;
 use fixed::types::U24F8;
 use fixed::types::extra::U8;
 
+use dedi_core::flash::{apply_erase_busy, erase_busy_duration};
+
 use crate::config;
 use crate::protocol::IoMode;
 use crate::spi_flash_programs::{assemble_duplex, assemble_rx, assemble_tx};
@@ -526,14 +528,6 @@ impl<'d> SpiFlash<'d> {
         write_data: &[u8],
         read_buf: &mut [u8],
     ) -> Result<(), SpiError> {
-        if write_data.first() == Some(&config::SPI_CMD_READ_STATUS)
-            && self
-                .force_busy_until
-                .is_some_and(|until| Instant::now() < until)
-        {
-            read_buf.fill(config::SPI_STATUS_WIP);
-            return Ok(());
-        }
         self.cs_assert();
         self.configure_duplex1();
         let result = (|| {
@@ -559,7 +553,14 @@ impl<'d> SpiFlash<'d> {
             Ok(())
         })();
         self.cs_deassert();
-        result
+        result?;
+        apply_erase_busy(
+            write_data,
+            read_buf,
+            self.force_busy_until
+                .is_some_and(|until| Instant::now() < until),
+        );
+        Ok(())
     }
 
     /// Write-only standard 1-1-1 transaction.
@@ -788,22 +789,5 @@ impl<'d> SpiFlash<'d> {
             }
             None => Ok(()),
         }
-    }
-}
-
-fn erase_busy_duration(write_data: &[u8]) -> Option<Duration> {
-    let opcode = *write_data.first()?;
-    match opcode {
-        // 4 KiB sector erase. EM100 usually finishes much sooner, but this keeps
-        // the host from issuing the next command before WIP is visible.
-        0x20 | 0x21 => Some(Duration::from_millis(250)),
-        // 32 KiB block erase.
-        0x52 | 0x5c => Some(Duration::from_millis(750)),
-        // 64 KiB block erase.
-        0xd8 | 0xdc => Some(Duration::from_millis(1_500)),
-        // Whole-chip erase. EM100 takes long enough that immediately following
-        // page-program commands can be ignored unless we hold WIP high here.
-        0x60 | 0xc7 => Some(Duration::from_secs(60)),
-        _ => None,
     }
 }

@@ -77,6 +77,32 @@ still needed; these tests do not establish an electrical cause or qualify all
 power-transition cases. QPI, four-byte addressing, killed OUT transfers and the
 broader UART stress matrix below were not qualified by these tests.
 
+## Erase status and EM100 investigation (2026-11-10)
+
+Erase-settling windows now overlay only WIP on a successful physical SR1 read;
+WEL, protection and SRWD bits are preserved, and SPI failures are propagated.
+Host regressions cover live status changes, expired windows, unrelated registers,
+read errors and the legacy `0x62` chip-erase window. Pico and shared backends use
+one opcode-duration table and status overlay. These changes have software/build
+coverage; this investigation did **not** flash or hardware-qualify a new ELF.
+
+On the isolated EM100Pro EM138573 / Pico 152A3F44E920C459 rig, raw USB transceive
+commands at **24 MHz, single I/O** bypassed rflasher's erase selection. EM100's
+SPI trace decoded `0xDC` at `0x00010000` and `0x01000000` correctly, but its
+MX25L51245G profile retained all SDRAM contents and WEL, with and without B7.
+W25Q256FV's profile behaved the same way. B7 plus legacy D8 cleared WEL and
+erased exactly those windows, independently verified across the full 64 MiB.
+Original SDRAM was restored and verified; no programmer/emulator firmware changed.
+This points to native-erase handling in the EM100 stack, not a Macronix-specific
+DediBridge serializer defect. It does not identify the EM100 component responsible
+or replace a logic-analyzer timing qualification against real silicon.
+
+Retain the conservative erase delays, including the 60-second chip-erase window.
+The delayed-WIP workaround must not be shortened merely because an emulator
+reports ready: qualify any replacement policy against delayed WIP and actual
+erase completion first. Evidence is retained in the rflasher workspace under
+`.local/em100-smoke-20261110/pr-investigation-v1/`.
+
 ## Physical checks
 
 For each board:
