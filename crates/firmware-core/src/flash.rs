@@ -193,8 +193,19 @@ pub fn erase_busy_duration(command: &[u8]) -> Option<Duration> {
         0x20 | 0x21 => Some(Duration::from_millis(250)),
         0x52 | 0x5c => Some(Duration::from_millis(750)),
         0xd8 | 0xdc => Some(Duration::from_millis(1500)),
-        0x60 | 0xc7 => Some(Duration::from_secs(60)),
+        0x60 | 0x62 | 0xc7 => Some(Duration::from_secs(60)),
         _ => None,
+    }
+}
+
+/// Overlay the erase-settling WIP bit on a successful physical status read.
+/// Never invent the rest of SR1: protection, WEL and SRWD remain the flash's
+/// current values. The caller must propagate SPI errors before applying this.
+pub fn apply_erase_busy(command: &[u8], response: &mut [u8], busy: bool) {
+    if busy && command.first() == Some(&0x05) {
+        for status in response {
+            *status |= 1;
+        }
     }
 }
 
@@ -219,23 +230,24 @@ impl<S: SingleSpi> Flash for SingleFlash<S> {
         self.bus.select(selected);
     }
     fn transceive(&mut self, command: &[u8], response: &mut [u8]) -> Result<(), Error> {
-        if command.first() == Some(&0x05) && self.busy_until.is_some_and(|t| Instant::now() < t) {
-            response.fill(1);
-            return Ok(());
-        }
         self.bus.select(true);
         let result = self
             .bus
             .blocking_write(command)
             .and_then(|()| self.bus.blocking_read(response));
         self.bus.select(false);
-        if result.is_ok()
-            && response.is_empty()
+        result?;
+        apply_erase_busy(
+            command,
+            response,
+            self.busy_until.is_some_and(|t| Instant::now() < t),
+        );
+        if response.is_empty()
             && let Some(duration) = erase_busy_duration(command)
         {
             self.busy_until = Some(Instant::now() + duration);
         }
-        result
+        Ok(())
     }
     async fn start_read(
         &mut self,
@@ -310,6 +322,8 @@ mod tests {
     #[derive(Default)]
     struct Bus {
         writes: std::vec::Vec<std::vec::Vec<u8>>,
+        status: u8,
+        fail_read: bool,
     }
     impl SingleSpi for Bus {
         fn set_frequency(&mut self, _: u32) -> Result<(), Error> {
@@ -321,7 +335,10 @@ mod tests {
             Ok(())
         }
         fn blocking_read(&mut self, bytes: &mut [u8]) -> Result<(), Error> {
-            bytes.fill(0);
+            if self.fail_read {
+                return Err(Error::Unsupported);
+            }
+            bytes.fill(self.status);
             Ok(())
         }
         async fn write(&mut self, bytes: &[u8]) -> Result<(), Error> {
@@ -341,6 +358,7 @@ mod tests {
             (0xd8, 1500),
             (0xdc, 1500),
             (0x60, 60000),
+            (0x62, 60000),
             (0xc7, 60000),
         ] {
             assert_eq!(
@@ -359,6 +377,43 @@ mod tests {
             }
         }
     }
+    #[test]
+    fn forced_busy_preserves_live_status_bits_and_reads_the_bus() {
+        let mut flash = SingleFlash::new(Bus {
+            status: 0x9c,
+            ..Bus::default()
+        });
+        flash.transceive(&[0x62], &mut []).unwrap();
+        let mut status = [0; 16];
+        flash.transceive(&[0x05], &mut status).unwrap();
+        assert_eq!(status, [0x9d; 16]);
+        assert_eq!(flash.bus.writes.last().unwrap(), &[0x05]);
+        flash.bus.status = 0x82;
+        flash.transceive(&[0x05], &mut status).unwrap();
+        assert_eq!(status, [0x83; 16]);
+        flash.busy_until = Some(Instant::now());
+        flash.transceive(&[0x05], &mut status).unwrap();
+        assert_eq!(status, [0x82; 16]);
+    }
+
+    #[test]
+    fn forced_busy_does_not_hide_spi_errors_or_modify_other_registers() {
+        let mut flash = SingleFlash::new(Bus::default());
+        flash.transceive(&[0x62], &mut []).unwrap();
+        flash.bus.fail_read = true;
+        assert_eq!(
+            flash.transceive(&[0x05], &mut [0; 16]),
+            Err(Error::Unsupported)
+        );
+        let mut data = [0x80, 0x02, 0x1c];
+        apply_erase_busy(&[0x35], &mut data, true);
+        assert_eq!(data, [0x80, 0x02, 0x1c]);
+        apply_erase_busy(&[0x05], &mut data, false);
+        assert_eq!(data, [0x80, 0x02, 0x1c]);
+        apply_erase_busy(&[0x05], &mut data, true);
+        assert_eq!(data, [0x81, 0x03, 0x1d]);
+    }
+
     #[test]
     fn early_bulk_waits_for_erase_settling_and_cancellation_keeps_window() {
         use futures::{executor::block_on, poll};
